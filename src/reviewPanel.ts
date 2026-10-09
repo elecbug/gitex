@@ -1,6 +1,14 @@
 import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import { ReviewThread } from './model';
+import { Location } from './anchor';
+
+export interface ReviewContext {
+  repository: string;
+  location: Location;
+  sync: 'automatic' | 'manual' | 'failed';
+  status: string;
+}
 
 export type ReviewAction = { type: 'ready' | 'source' } |
   { type: 'edit'; commentId: string; body: string; basedOn: string; requestId: string } |
@@ -24,9 +32,12 @@ export class ReviewPanel implements vscode.Disposable {
     this.panel.webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource}; script-src 'nonce-${nonce}';">
       <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="${style}"></head>
-      <body><h1>GiTex Review</h1><p id="location"></p><p id="status" role="status"></p>
-      <button id="source">Open source / saved excerpt</button><p id="error" role="alert"></p>
-      <div id="thread"></div>
+      <body><main class="review-shell">
+      <header class="app-header"><span class="brand">GiTex<span class="brand-divider" aria-hidden="true">/</span><span class="brand-section">Review</span></span>
+      <span id="thread-state" class="badge" hidden></span></header>
+      <p id="error" class="error-banner" role="alert"></p>
+      <div id="thread"><p class="loading" role="status">Loading review…</p></div>
+      </main>
       <script nonce="${nonce}" src="${script}"></script></body></html>`;
     this.listeners.push(this.panel.webview.onDidReceiveMessage(async (message: unknown) => {
       if (!validAction(message)) { return; }
@@ -42,8 +53,8 @@ export class ReviewPanel implements vscode.Disposable {
     }), this.panel.onDidDispose(() => { this.listeners.forEach(listener => listener.dispose()); onClose(); }));
   }
 
-  update(review: ReviewThread, location: string, status: string): void {
-    void this.panel.webview.postMessage({ type: 'render', key: this.key, review, location, status });
+  update(review: ReviewThread, context: ReviewContext): void {
+    void this.panel.webview.postMessage({ type: 'render', key: this.key, review, context });
     this.sendDraft();
   }
 

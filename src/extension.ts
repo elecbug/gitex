@@ -617,7 +617,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       const status = this.syncErrors.get(item.repository.store.root) ||
         (automatic ? 'Auto sync after saving is enabled. Saved comments are fetched and pushed in the background.' :
           'Auto sync after saving is disabled. Edits are saved locally; use Sync Comments to publish them.');
-      panel.update(item.review, `${this.repositoryLabel(item.repository)} · ${item.review.anchor.path} · ${item.review.resolved ? 'Resolved · Hidden in editor' : 'Open'}${item.location.kind === 'outdated' ? ' · Outdated' : item.location.similarity !== undefined ? ` · Similar text (${Math.round(item.location.similarity * 100)}%)` : ''}`, status);
+      panel.update(item.review, { repository: this.repositoryLabel(item.repository), location: item.location,
+        sync: this.syncErrors.has(item.repository.store.root) ? 'failed' : automatic ? 'automatic' : 'manual', status });
     }
   }
 

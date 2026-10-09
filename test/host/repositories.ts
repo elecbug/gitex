@@ -54,6 +54,8 @@ export async function repositoryTests(app: any, existing: ReviewStore): Promise<
     while (true) {
       const ready = app.contextUri?.fsPath === file && app.activeRoot === expected &&
         (expected ? app.getChildren().some((item: any) => item.repository.store.root === expected) &&
+          app.getChildren().filter((item: any) => !item.review.resolved && item.location.kind === 'attached')
+            .every((item: any) => app.nativeThreads.has(item.key)) &&
           [...app.nativeThreads.keys()].every((key: any) => key.startsWith(`${expected}:`)) :
           app.getChildren().length === 0 && app.nativeThreads.size === 0);
       if (ready) { break; }

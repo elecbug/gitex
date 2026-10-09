@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { chromium, Frame } from 'playwright-core';
 import { Git } from '../../src/git';
 import { ReviewStore, REMOTE_REF } from '../../src/store';
+import { reviewAppearance } from './appearance';
 
 async function until(check: () => Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 15000;
@@ -91,6 +92,11 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   await until(async () => await view.locator('#comments > details').count() > 0, 'rendered review');
   await until(async () => (await view.locator('#comments textarea').first().inputValue()) === 'My unsaved draft', 'preserved inline draft');
   await view.getByRole('button', { name: 'Cancel', exact: true }).first().click();
+  assert.equal(await view.locator('#location').textContent(), 'main.tex');
+  assert.equal(await view.locator('.passage pre').textContent(), 'A reviewed result.');
+  assert.equal(await view.locator('#match-state').textContent(), 'Attached');
+  assert.equal(await view.getByRole('button', { name: 'Save reply', exact: true }).isDisabled(), true);
+  await reviewAppearance(view);
   const originalItem = app.getChildren().find((item: any) => item.review.id === id);
   const otherItem = app.getChildren().find((item: any) => item.review.id !== id);
   const sharedPanel = app.panels.get(originalItem.key);
@@ -115,8 +121,13 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   const replyBarrier = new Promise<void>(resolve => { releaseReply = resolve; });
   repository.store.reply = async (...args: any[]) => { replyStarted = true; await replyBarrier; return realReply(...args); };
   await view.locator('#reply').fill('Saved to the original thread while switching');
-  await view.getByRole('button', { name: 'Save reply', exact: true }).click();
+  await view.locator('#reply').dispatchEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(replyStarted, false, 'IME composition must not submit a draft');
+  await view.locator('#reply').press('Control+Enter');
   await until(async () => replyStarted, 'pending reply save');
+  assert.equal(await view.getByRole('button', { name: 'Saving…', exact: true }).isDisabled(), true);
+  assert.equal(await view.locator('#reply-form').getAttribute('aria-busy'), 'true');
   await vscode.commands.executeCommand('gitex.reviewThread', otherItem);
   await until(async () => (await view.locator('.body').first().textContent()) === otherItem.review.comments[0].body, 'switch while save is pending');
   await view.locator('#reply').fill('Draft in the other thread');
@@ -129,6 +140,7 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   await vscode.commands.executeCommand('gitex.reviewThread', originalItem);
   await until(async () => (await view.locator('.body').first().textContent()) === (await rootComment(store)).body, 'return to original thread');
   await until(async () => (await view.locator('#reply').inputValue()) === '', 'original reply completion');
+  assert.equal(await view.getByRole('button', { name: 'Save reply', exact: true }).isDisabled(), true);
   repository.store.reply = realReply;
 
   const beforeResolve = { syncs, pulls };
