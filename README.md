@@ -111,7 +111,7 @@ Resolving a thread with an unsaved inline edit keeps the draft recoverable in th
 
 ## Tracking through text edits
 
-See [Anchor tracking design and implementation](docs/anchor-tracking.md) (Korean) for the matching algorithm, saved/local references, estimates, display rules, and compatibility details.
+See [Anchor tracking design and implementation](docs/anchor-tracking.md) for the matching algorithm, saved/local references, estimates, display rules, and compatibility details.
 
 New tracking references save the selected lines and one preceding and one following sentence in the optional `sentenceContext` field. Sentences can span multiple lines; whitespace and CRLF are normalized. Context does not require final punctuation: a nearby paragraph or file boundary also ends a valid excerpt, so `랄랄루` after a selected `헬로` is retained. A fragment clipped by the 64-line search window is still excluded. Short excerpts can estimate a missing passage when an exact, unambiguous pair of surrounding contexts survives; a short fragment alone remains insufficient. Blank lines are skipped to find the next available sentence within 64 lines on each side. Named LaTeX headings such as `\section*{작은 생각}` can also supply context; stars, optional short titles, nested formatting, and trailing labels are supported. Heading comparisons use their titles, not the shared command syntax. Bare structural commands such as `\begin`/`\end` and LaTeX comments are excluded. Extraction skips oversized blocks and stores at most 4,096 characters per context. Unavailable context stays empty. The existing `before`/`after` fields still retain up to three lines each.
 
