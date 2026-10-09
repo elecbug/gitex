@@ -149,6 +149,33 @@ test('remote path traversal and malformed comments are rejected', () => {
   assert.throws(() => parseEvent('{"version":99}'), /Invalid/);
 });
 
+test('sentence context is optional and validated without changing the event version', () => {
+  const anchor = createAnchor('main.tex', paper, 2, 2, null);
+  const id = '11111111-1111-4111-8111-111111111111';
+  const event = { version: 1, id, threadId: id, clock: 1, at: new Date().toISOString(), author: { name: 'Tester', email: 'test@example.test' }, type: 'create', body: 'Review', anchor };
+  for (const sentenceContext of [undefined, { before: '', after: '' }, { before: 'Previous sentence.', after: 'Following sentence.' }]) {
+    assert.equal(parseEvent(JSON.stringify({ ...event, anchor: { ...anchor, sentenceContext } })).version, 1);
+  }
+  for (const sentenceContext of [null, [], 'text', {}, { before: 3, after: '' }, { before: 'a\nb', after: '' }, { before: '', after: 'x'.repeat(4097) }]) {
+    assert.throws(() => parseEvent(JSON.stringify({ ...event, anchor: { ...anchor, sentenceContext } })), /Invalid GiTex/);
+  }
+});
+
+test('legacy and sentence anchors coexist, sync, and upgrade on explicit saves with original history intact', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const { sentenceContext, ...legacy } = anchor;
+  const id = await a.create(legacy, 'Old review');
+  await a.sync(); await b.pull();
+  assert.equal((await b.threads())[0].anchor.sentenceContext, undefined);
+  await b.reply(id, 'Save with sentence tracking', anchor, id);
+  await b.sync(); await a.pull();
+  const current = (await a.threads())[0];
+  assert.deepEqual(current.anchor.sentenceContext, sentenceContext);
+  assert.deepEqual(current.anchorHistory[0].anchor, legacy);
+  assert.equal(current.anchorHistory.length, 2);
+  assert.deepEqual(await a.threads(), await b.threads());
+});
+
 test('editing comments and replies preserves every version and the original author', async t => {
   const { a, b, anchor } = await fixture(t);
   const id = await a.create(anchor, 'Original comment');

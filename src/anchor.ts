@@ -10,10 +10,15 @@ export interface Anchor {
   before: string[];
   after: string[];
   occurrences: number;
+  // Optional so immutable anchors written by older clients remain valid.
+  sentenceContext?: { before: string; after: string };
 }
 
 export type Location = { kind: 'attached'; startLine: number; endLine: number; similarity?: number } |
+  { kind: 'uncertain'; estimatedLine: number; confidence: number; reason: string } |
   { kind: 'outdated'; reason: string };
+
+export const MAX_CONTEXT_LENGTH = 4096;
 
 function lines(text: string): string[] { return text.replace(/\r\n/g, '\n').split('\n'); }
 function hash(text: string): string { return createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex'); }
@@ -33,10 +38,16 @@ export function createAnchor(path: string, text: string, startLine: number, endL
   if (!selected.some(line => line.trim())) { throw new Error('Select at least one non-empty line.'); }
   return { path, baseCommit, documentHash: hash(text), startLine, endLine, selected,
     before: document.slice(Math.max(0, startLine - 3), startLine),
-    after: document.slice(endLine + 1, endLine + 4), occurrences: matches(document, selected).length };
+    after: document.slice(endLine + 1, endLine + 4), occurrences: matches(document, selected).length,
+    sentenceContext: surroundingSentences(document, startLine, endLine) };
 }
 
 export function locateAnchor(anchor: Anchor, text: string): Location {
+  const location = locateText(anchor, text);
+  return location.kind === 'attached' ? location : contextOnly(anchor, lines(text)) ?? location;
+}
+
+function locateText(anchor: Anchor, text: string): Location {
   if (hash(text) === anchor.documentHash) { return { kind: 'attached', startLine: anchor.startLine, endLine: anchor.endLine }; }
   const document = lines(text);
   const candidates = matches(document, anchor.selected).map(start => {
@@ -49,12 +60,15 @@ export function locateAnchor(anchor: Anchor, text: string): Location {
       if (document[start + anchor.selected.length + i] !== anchor.after[i]) { break; }
       score++;
     }
+    score += sentenceEvidence(anchor, document, start, start + anchor.selected.length - 1) * 3;
     return { start, score };
   }).sort((a, b) => b.score - a.score);
   if (!candidates.length) { return approximate(anchor, document); }
   const best = candidates[0];
   // An old sentence copied elsewhere must not outrank its slightly edited passage with intact context.
-  if (anchor.selected.join(' ').length >= 16 && best.score < (anchor.before.length + anchor.after.length) / 2) {
+  const contextWeight = anchor.before.length + anchor.after.length +
+    [anchor.sentenceContext?.before, anchor.sentenceContext?.after].filter(Boolean).length * 3;
+  if (anchor.selected.join(' ').length >= 16 && best.score < contextWeight / 2) {
     return approximate(anchor, document);
   }
   // Never select one of several identical passages based only on its line number.
@@ -123,6 +137,9 @@ function approximate(anchor: Anchor, document: string[]): Location {
         weight += importance;
       });
     }
+    const sentenceCount = [anchor.sentenceContext?.before, anchor.sentenceContext?.after].filter(Boolean).length;
+    total += sentenceEvidence(anchor, document, start, end) * 2;
+    weight += sentenceCount * 2;
     return weight ? total / weight : 0;
   };
   type Candidate = { start: number; end: number; text: string; context: number; rank: number; similarity: number };
@@ -164,4 +181,129 @@ function approximate(anchor: Anchor, document: string[]): Location {
     return { kind: 'attached', startLine: best.start, endLine: best.end };
   }
   return { kind: 'attached', startLine: best.start, endLine: best.end, similarity: best.similarity };
+}
+
+// Keep structural LaTeX and comments out of sentence identity. Inline macros remain
+// part of the saved text; a wrapped sentence is stored independently of line breaks.
+function structural(line: string): boolean {
+  return /^\s*(?:\\(?:begin|end|(?:sub)*section|chapter|part|label|documentclass|usepackage|include|input)\b|\\[\[\]]|\$\$|%)/u.test(line);
+}
+function proseLine(line: string): string { return normalize(line.replace(/(?<!\\)%.*/u, '')); }
+type Sentence = { text: string; start: number; end: number; startLine: number; endLine: number };
+function sentenceIndex(document: string[]) {
+  const normalized = document.map(proseLine);
+  const offsets: number[] = [];
+  let length = 0;
+  for (const line of normalized) { offsets.push(length); length += line.length + 1; }
+  const text = normalized.join(' ');
+  const lineAt = (offset: number): number => {
+    let low = 0, high = offsets.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (offsets[middle] <= offset) { low = middle; } else { high = middle - 1; }
+    }
+    return low;
+  };
+  const sentences: Sentence[] = [];
+  const segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
+  let first = 0;
+  const flush = (end: number) => {
+    const block = normalized.slice(first, end).join(' ');
+    // Do not spend unbounded time segmenting a generated/minified LaTeX block.
+    if (!block || block.length > 32_768) { return; }
+    for (const part of segmenter.segment(block)) {
+      const value = part.segment.trim();
+      if (!value || value.length > MAX_CONTEXT_LENGTH) { continue; }
+      const start = offsets[first] + part.index + part.segment.indexOf(value);
+      const end = start + value.length;
+      sentences.push({ text: value, start, end, startLine: lineAt(start), endLine: lineAt(end - 1) });
+    }
+  };
+  for (let i = 0; i <= document.length; i++) {
+    if (i === document.length || !normalized[i] || structural(document[i])) { flush(i); first = i + 1; }
+  }
+  return { text, sentences, lineAt };
+}
+
+function surroundingSentences(document: string[], start: number, end: number): { before: string; after: string } {
+  // Segment each side independently so an unfinished/edited selected sentence cannot
+  // consume its following context. Never store selected text as its own context.
+  const first = Math.max(0, start - 64);
+  const previous = document.slice(first, start);
+  const complete = (sentence: Sentence) => /[.!?。！？]["'”’)}\]]*$/u.test(sentence.text);
+  const boundary = first === 0 || !proseLine(document[first - 1]) || structural(document[first - 1]) ||
+    /[.!?。！？]["'”’)}\]]*$/u.test(proseLine(document[first - 1]));
+  const before = sentenceIndex(previous).sentences.filter(sentence => complete(sentence) &&
+    (boundary || sentence.startLine > 0) && previous.length - sentence.endLine <= 12).at(-1);
+  const after = sentenceIndex(document.slice(end + 1, end + 65)).sentences.find(sentence => complete(sentence) && sentence.startLine < 12);
+  return { before: before?.text ?? '', after: after?.text ?? '' };
+}
+
+function sentenceEvidence(anchor: Anchor, document: string[], start: number, end: number): number {
+  const saved = anchor.sentenceContext;
+  if (!saved) { return 0; }
+  // Full sentences can extend past the old three-line window after rewrapping.
+  return Number(!!saved.before && normalize(document.slice(Math.max(0, start - 64), start).map(proseLine).join(' ')).endsWith(saved.before)) +
+    Number(!!saved.after && normalize(document.slice(end + 1, end + 65).map(proseLine).join(' ')).startsWith(saved.after));
+}
+
+function distinctive(text: string): boolean {
+  const prose = text.replace(/\\[a-zA-Z]+\*?(?:\[[^\]]*\])?/gu, '').replace(/[{}$\d]/gu, '');
+  const words = prose.match(/\p{L}{2,}/gu) ?? [];
+  return (new Set(words.map(word => word.toLowerCase())).size >= 4 && words.join('').length >= 18) ||
+    (prose.match(/[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]/gu)?.length ?? 0) >= 12;
+}
+
+function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
+  // Older anchors use their actual saved lines, never context invented from today's document.
+  const saved = anchor.sentenceContext ?? {
+    before: normalize(anchor.before.filter(line => !structural(line)).map(proseLine).join(' ')),
+    after: normalize(anchor.after.filter(line => !structural(line)).map(proseLine).join(' '))
+  };
+  if (!distinctive(saved.before) || !distinctive(saved.after) || saved.before === saved.after ||
+      saved.before.length > MAX_CONTEXT_LENGTH || saved.after.length > MAX_CONTEXT_LENGTH) { return undefined; }
+  const index = sentenceIndex(document);
+  type Match = { start: number; end: number; score: number };
+  const budget = { remaining: 4_000_000 };
+  const find = (text: string): Match[] => {
+    const found: Match[] = [];
+    for (let at = index.text.indexOf(text); at !== -1; at = index.text.indexOf(text, at + 1)) {
+      if ((at === 0 || /\s/u.test(index.text[at - 1])) &&
+          (at + text.length === index.text.length || /\s/u.test(index.text[at + text.length]))) {
+        found.push({ start: at, end: at + text.length, score: 1 });
+        if (found.length > 32) { return []; } // Repetitive context is not identifying evidence.
+      }
+    }
+    const rough = index.sentences.map(sentence => ({ ...sentence, score: dice(text, sentence.text) }))
+      .filter(sentence => sentence.score >= 0.65 && !found.some(match => match.start < sentence.end && match.end > sentence.start))
+      .sort((a, b) => b.score - a.score);
+    if (rough.length > 64) { return []; }
+    for (const sentence of rough) {
+      const score = similarity(text, sentence.text, budget);
+      if (score >= 0.86) { found.push({ start: sentence.start, end: sentence.end, score }); }
+    }
+    return found;
+  };
+  const before = find(saved.before), after = find(saved.after);
+  if (budget.remaining < 0) { return undefined; }
+  const maxGap = Math.min(2000, Math.max(160, normalize(anchor.selected.join(' ')).length * 3 + 80));
+  const maxLines = Math.max(8, Math.min(40, anchor.selected.length * 3 + 4));
+  const candidates: { estimatedLine: number; confidence: number; start: number; end: number }[] = [];
+  for (const left of before) {
+    for (const right of after) {
+      const gap = right.start - left.end;
+      const leftLine = index.lineAt(left.end - 1), rightLine = index.lineAt(right.start);
+      if (gap < 0 || gap > maxGap || rightLine - leftLine > maxLines ||
+          document.slice(leftLine + 1, rightLine).some(structural)) { continue; }
+      candidates.push({ estimatedLine: Math.min(leftLine + 1, rightLine),
+        confidence: (left.score + right.score) / 2 - 0.1 * gap / maxGap, start: left.start, end: right.end });
+    }
+  }
+  candidates.sort((a, b) => b.confidence - a.confidence);
+  const best = candidates[0];
+  if (!best || best.confidence < 0.85) { return undefined; }
+  const alternative = candidates.find(candidate => candidate.start !== best.start || candidate.end !== best.end);
+  if (alternative && best.confidence - alternative.confidence < 0.08) { return undefined; }
+  return { kind: 'uncertain', estimatedLine: best.estimatedLine, confidence: best.confidence,
+    reason: 'The original passage could not be matched. Its location is estimated from the surrounding context; review the saved reference before reconnecting.' };
 }

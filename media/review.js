@@ -97,6 +97,9 @@
     const passage = element('details', undefined, contextCard, 'passage'); passage.open = true;
     const passageSummary = element('summary', 'Saved reference', passage);
     const excerpt = element('pre', '', element('div', undefined, passage, 'passage-content'));
+    const surroundings = element('details', undefined, passage, 'surroundings');
+    const surroundingsLabel = element('summary', 'Surrounding sentences', surroundings);
+    const surroundingsBody = element('div', undefined, surroundings);
     const tools = element('div', undefined, contextCard, 'thread-tools');
     const source = button('Open source', tools, 'secondary', 'source'); source.id = 'source';
     const move = button('Move to editor selection', tools, 'quiet', 'move');
@@ -127,7 +130,8 @@
     icon('history', trackingSummary);
     const trackingLabel = element('span', 'Tracking history', trackingSummary);
     const trackingEntries = element('div', undefined, tracking, 'revision-list');
-    const view = { key, root, repository, location, match, lines, contextNote, excerpt, passageSummary, source,
+    const view = { key, root, repository, location, match, lines, contextNote, excerpt, passage, passageSummary, source,
+      surroundings, surroundingsLabel, surroundingsBody,
       count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), error: '',
       trackingLabel, trackingEntries, trackingSignature: '', scroll: 0 };
     source.onclick = () => vscode.postMessage({ type: 'source', key: view.key });
@@ -189,20 +193,38 @@
   function reference(parent, label, anchor) {
     element('p', label + ': ' + anchor.path + ':' + (anchor.startLine + 1) + '–' + (anchor.endLine + 1), parent, 'reference-label');
     element('pre', anchor.selected.join('\n'), parent);
+    const context = element('details', undefined, parent, 'surroundings');
+    element('summary', anchor.sentenceContext ? 'Surrounding sentences' : 'Saved line context (legacy)', context);
+    renderSurroundings(context, anchor);
+  }
+  function renderSurroundings(parent, anchor) {
+    const saved = anchor.sentenceContext || { before: anchor.before.join('\n'), after: anchor.after.join('\n') };
+    for (const [side, label] of [['before', 'Preceding sentence'], ['after', 'Following sentence']]) {
+      element('p', anchor.sentenceContext ? label : (side === 'before' ? 'Preceding lines' : 'Following lines'), parent, 'reference-label');
+      element('pre', saved[side] || '(Not available in this saved reference)', parent);
+    }
   }
   function renderContext(view, review, context) {
     view.repository.textContent = context.repository;
     view.location.textContent = review.anchor.path;
     const attached = context.location.kind === 'attached';
-    view.lines.textContent = (attached ? '' : 'Saved reference · ') + range(attached ? context.location : review.anchor);
-    view.match.textContent = !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
+    const uncertain = context.location.kind === 'uncertain';
+    view.root.dataset.location = context.location.kind;
+    view.lines.textContent = uncertain ? 'Estimated location · Line ' + (context.location.estimatedLine + 1) :
+      (attached ? '' : 'Saved reference · ') + range(attached ? context.location : review.anchor);
+    view.match.textContent = uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
       'Similar text · ' + Math.round(context.location.similarity * 100) + '%';
-    view.match.dataset.tone = !attached ? 'warning' : 'accent';
+    view.match.dataset.tone = uncertain ? 'uncertain' : !attached ? 'warning' : 'accent';
     view.contextNote.hidden = attached;
     view.contextNote.textContent = attached ? '' : context.location.reason + ' Select source lines and use Move to editor selection to reattach.';
     view.passageSummary.textContent = 'Saved reference · ' + range(review.anchor);
     view.excerpt.textContent = review.anchor.selected.join('\n');
-    view.source.querySelector('.button-label').textContent = attached ? 'Open source' : 'Open saved excerpt';
+    if (uncertain && view.lastLocation !== 'uncertain') view.passage.open = true;
+    view.lastLocation = context.location.kind;
+    view.surroundingsLabel.textContent = review.anchor.sentenceContext ? 'Surrounding sentences' : 'Saved line context (legacy)';
+    view.surroundingsBody.replaceChildren();
+    renderSurroundings(view.surroundingsBody, review.anchor);
+    view.source.querySelector('.button-label').textContent = uncertain ? 'Open estimated location' : attached ? 'Open source' : 'Open saved excerpt';
     view.count.textContent = review.comments.length + (review.comments.length === 1 ? ' comment' : ' comments');
     view.syncInfo.dataset.state = context.sync;
     view.syncLabel.textContent = context.sync === 'failed' ? 'Sync pending' : context.sync === 'automatic' ? 'Auto sync on save' : 'Manual sync';

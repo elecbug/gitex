@@ -1,4 +1,4 @@
-import { Anchor } from './anchor';
+import { Anchor, MAX_CONTEXT_LENGTH } from './anchor';
 
 export interface Author { name: string; email: string }
 interface BaseEvent { version: 1; id: string; threadId: string; clock: number; at: string; author: Author }
@@ -53,6 +53,10 @@ export function parseEvent(text: string): ReviewEvent {
         !strings(a.selected) || a.selected.length !== a.endLine - a.startLine + 1 || !a.selected.some((line: string) => line.trim()) ||
         !strings(a.before) || a.before.length > 3 || !strings(a.after) || a.after.length > 3 ||
         !Number.isSafeInteger(a.occurrences) || a.occurrences < 1) { return bad(); }
+    if (a.sentenceContext !== undefined && (!a.sentenceContext || Array.isArray(a.sentenceContext) ||
+        typeof a.sentenceContext !== 'object' || !['before', 'after'].every(side =>
+          typeof a.sentenceContext[side] === 'string' && a.sentenceContext[side].length <= MAX_CONTEXT_LENGTH &&
+          !/[\r\n\0]/u.test(a.sentenceContext[side])))) { return bad(); }
   }
   if ((e.type === 'edit' || e.type === 'reply') && e.anchorBasedOn !== undefined && (!e.anchor || !uuid.test(e.anchorBasedOn))) { return bad(); }
   if (e.type === 'state') {

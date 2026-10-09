@@ -93,7 +93,7 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   await until(async () => (await view.locator('#comments textarea').first().inputValue()) === 'My unsaved draft', 'preserved inline draft');
   await view.getByRole('button', { name: 'Cancel', exact: true }).first().click();
   assert.equal(await view.locator('#location').textContent(), 'main.tex');
-  assert.equal(await view.locator('.passage pre').textContent(), 'A reviewed result.');
+  assert.equal(await view.locator('.passage-content > pre').textContent(), 'A reviewed result.');
   assert.equal(await view.locator('#match-state').textContent(), 'Attached');
   assert.equal(await view.getByRole('button', { name: 'Save reply', exact: true }).isDisabled(), true);
   await reviewAppearance(view);

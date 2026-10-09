@@ -99,3 +99,96 @@ test('blank-only and invalid ranges cannot create misleading anchors', () => {
   assert.throws(() => createAnchor('main.tex', '\n\n', 0, 1, null), /non-empty/);
   assert.throws(() => createAnchor('main.tex', 'text', 0, 3, null), /range/);
 });
+
+const preceding = 'We evaluated the protocol on the independent validation dataset.';
+const target = 'The results show a 15% improvement.';
+const following = 'Further analysis is needed to explain the observed performance.';
+const contextPaper = `${preceding}\n${target}\n${following}`;
+
+test('anchors save one complete sentence on each side, across line wraps and CRLF', () => {
+  const paper = 'An older sentence.\nWe evaluated the protocol\non the independent\nvalidation dataset.\n' + target +
+    '\nFurther analysis is needed\nto explain the observed\nperformance.\nAnother later sentence.';
+  const anchor = createAnchor('main.tex', paper.replace(/\n/g, '\r\n'), 4, 4, null);
+  assert.deepEqual(anchor.sentenceContext, { before: preceding, after: following });
+  assert.equal(anchor.before.length, 3); assert.equal(anchor.after.length, 3, 'legacy fields keep their original limits');
+  assert.deepEqual(createAnchor('main.tex', target, 0, 0, null).sentenceContext, { before: '', after: '' });
+});
+
+test('LaTeX structure, comments, inline macros and non-Latin sentences are handled conservatively', () => {
+  const before = '우리는 독립적인 데이터로 프로토콜을 평가했습니다.';
+  const after = '결과를 설명하려면 추가적인 분석이 필요합니다.';
+  const text = `\\section{Results}\n${before}\n${target}\n${after}\n% This sentence is commented out.`;
+  const anchor = createAnchor('main.tex', text, 2, 2, null);
+  assert.deepEqual(anchor.sentenceContext, { before, after });
+  assert.equal(locateAnchor(anchor, text.replace(target + '\n', '')).kind, 'uncertain');
+  const latex = createAnchor('main.tex', `We evaluated the \\emph{protocol} using independent validation data.\n${target}\n${following}`, 1, 1, null);
+  assert.match(latex.sentenceContext!.before, /\\emph\{protocol\}/);
+});
+
+test('deletion and complete replacement estimate locality without claiming text identity', () => {
+  const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
+  const original = structuredClone(anchor);
+  for (const replacement of ['', 'An unrelated observation about compiler design.\n']) {
+    const location = locateAnchor(anchor, `A new introductory paragraph.\n${preceding}\n${replacement}${following}`);
+    assert.equal(location.kind, 'uncertain');
+    if (location.kind === 'uncertain') {
+      assert.equal(location.estimatedLine, 2);
+      assert.ok(location.confidence >= 0.85 && location.confidence <= 1);
+      assert.equal('startLine' in location, false, 'an estimate is not an attached range');
+    }
+  }
+  assert.deepEqual(anchor, original, 'location calculations must never mutate saved anchors');
+  assert.equal(locateAnchor(anchor, `Title\n${contextPaper}`).kind, 'attached');
+});
+
+test('context-only matches tolerate sentence rewrapping and small edits on both sides', () => {
+  const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
+  const changed = `${preceding.replace('independent', 'independent test').replace('protocol on', 'protocol\non')}\n` + following.replace('needed', 'required');
+  const location = locateAnchor(anchor, changed);
+  assert.equal(location.kind, 'uncertain');
+  if (location.kind === 'uncertain') { assert.equal(location.estimatedLine, 2); }
+});
+
+test('complete sentence evidence follows passages when context is rewrapped beyond three lines', () => {
+  const longBefore = 'Before the final measurement we independently evaluated each protocol over the entire validation dataset.';
+  const longAfter = 'After every experimental run the team recorded the complete measurements for further statistical analysis.';
+  const anchor = createAnchor('main.tex', `${longBefore}\n${target}\n${longAfter}`, 1, 1, null);
+  const before = longBefore.split(' ').join('\n'), after = longAfter.split(' ').join('\n');
+  const location = locateAnchor(anchor, `${before}\n${target}\n${after}`);
+  assert.equal(location.kind, 'attached');
+  const removed = locateAnchor(anchor, `${before}\n${after}`);
+  assert.equal(removed.kind, 'uncertain');
+});
+
+test('missing, reversed, distant, repetitive or structural context cannot produce estimates', () => {
+  const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
+  for (const changed of [
+    preceding, following, `${following}\n${preceding}`,
+    `${preceding}\n${'Unrelated discussion.\n'.repeat(20)}${following}`,
+    `${preceding}\n${following}\n\n${preceding}\n${following}`,
+    `${preceding}\n\\section{Different section}\n${following}`,
+    `${preceding}\n${following}\n`.repeat(40)
+  ]) { assert.equal(locateAnchor(anchor, changed).kind, 'outdated', changed); }
+  const structure = '\\end{figure}\n' + target + '\n\\begin{figure}';
+  assert.equal(locateAnchor(createAnchor('main.tex', structure, 1, 1, null), '\\end{figure}\n\\begin{figure}').kind, 'outdated');
+});
+
+test('one unique context pair can disambiguate individually repeated sentences', () => {
+  const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
+  const location = locateAnchor(anchor, `${preceding}\nA different ending.\n\\section{Next}\n${preceding}\n${following}`);
+  assert.equal(location.kind, 'uncertain');
+  if (location.kind === 'uncertain') { assert.equal(location.estimatedLine, 4); }
+});
+
+test('legacy anchors use only their saved line context and do not invent missing sentences', () => {
+  const { sentenceContext, ...legacy } = createAnchor('main.tex', contextPaper, 1, 1, null);
+  assert.equal(locateAnchor(legacy, `${preceding}\n${following}`).kind, 'uncertain');
+  assert.equal(locateAnchor({ ...legacy, before: ['Before'], after: ['After'] }, `${preceding}\n${following}`).kind, 'outdated');
+  assert.equal(locateAnchor(legacy, contextPaper).kind, 'attached');
+});
+
+test('bounded sentence capture does not save a clipped tail as a complete sentence', () => {
+  const long = Array.from({ length: 70 }, (_, i) => i === 69 ? 'the final measurements.' : 'More words across wrapped lines');
+  const anchor = createAnchor('main.tex', [...long, target, following].join('\n'), 70, 70, null);
+  assert.deepEqual(anchor.sentenceContext, { before: '', after: following });
+});

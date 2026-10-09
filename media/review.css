@@ -40,6 +40,11 @@ details[open] > summary::after { transform: rotate(45deg); }
 .passage { border-top: 1px solid var(--border); background: var(--inset); }
 .passage-content { margin: 0 16px 14px; max-height: 160px; overflow: auto; scrollbar-width: thin; }
 .passage pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 var(--vscode-editor-font-family); }
+.surroundings { margin: 0 16px 14px; color: var(--muted); }
+.surroundings > summary { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 8px 0; }
+.surroundings pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+[data-location="uncertain"] .context-card, .badge[data-tone="uncertain"] { border-style: dashed; }
+.badge[data-tone="uncertain"] { color: var(--muted); background: var(--inset); }
 .thread-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); }
 .resolved-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; padding: 4px 2px; font-size: 12px; margin-left: auto; }
 .resolved-toggle input { margin: 0; width: 15px; height: 15px; accent-color: var(--vscode-focusBorder); cursor: pointer; }
