@@ -15,6 +15,7 @@ A VS Code extension for sharing line comments on LaTeX papers through Git. Use i
 - Browse threads in **GiTex Comments** in the Explorer and VS Code's **Comments** panel.
 - Follow passages through small text edits, whitespace changes, line rewrapping, and movement using text similarity and surrounding context.
 - Renew the tracking reference on comment/reply saves and retain every previous reference in history.
+- Manually move a thread to selected source lines, including another file in the same repository, with a complete move history.
 - Reuse one review tab when switching threads, preserving unsaved edits and replies while the tab stays open.
 - Preserve saved excerpts and mark comments **Outdated** when no reliable, unambiguous match remains.
 - Save comments offline and synchronize reviews from multiple users through a central bare repository.
@@ -25,7 +26,7 @@ Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Syn
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.4.0.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.5.0.vsix`.
 2. Open your local paper repository. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -53,7 +54,7 @@ If an inline save fails, GiTex opens the review panel with your unsaved draft so
 
 Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. Selecting another thread replaces the content of the same tab; switching back restores its unsaved edit/reply drafts and expanded sections while the tab remains open. It supports editing, replies, and expandable **History** sections. **Open source / saved excerpt** returns to the associated passage. Comment deletion is not provided.
 
-Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.4.0. Upgrade all collaborators to 0.4.0 to use updated tracking references consistently.
+Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.5.0. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
 
 ## Resolve and reopen
 
@@ -71,9 +72,23 @@ Saving an edit or reply on an attached thread captures the currently matched sou
 
 The review panel's **Tracking history** shows the original passage and later reference snapshots with authors and timestamps. Each snapshot is part of the same immutable event as the saved edit/reply and is shared with comments. Concurrent updates preserve both snapshots and choose the current one deterministically. A failed or stale comment save cannot change its reference.
 
+## Move a comment manually
+
+1. Select the destination lines in a visible `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` editor. With no selection, GiTex uses the cursor line. The file must exist on disk; unsaved edits in it are supported.
+2. Open the thread in **GiTex Comments**, then click **Move to editor selection** in the review panel. You can also select **GiTex: Move Comment to Selection** from the thread's Explorer context menu or inline thread toolbar.
+3. Alternatively, run **GiTex: Move Comment to Selection** from the Command Palette or the editor context menu and choose the thread to move.
+
+The entire thread, including its replies, moves to the chosen range. You can reattach **Outdated** threads or move between source files in the same repository. Its ID, comment text, edit history, and resolved state stay intact. Resolved threads remain hidden in the paper editor after moving. Save or cancel an inline comment edit before moving; review-panel drafts are retained.
+
+Every successful move is a separate immutable event, including repeated moves to the same destination. **Tracking history** labels it **Manual move** and shows the previous tracking reference and new file, line range, source text, author, and timestamp. The new location becomes the matching reference for subsequent automatic tracking. Location moves are comment edits for synchronization purposes: they trigger one background pull + push when `gitex.autoSyncOnSave` is enabled, and remain local when disabled.
+
+If the destination text or known comment location changes during selection, the move is rejected so you can select it again. Concurrent offline moves retain both before/after records and choose a current location deterministically. Automatic tracking snapshots from a previous manual location are kept in history without moving the comment back. **Current reference** identifies the active location, which can differ from the final history entry.
+
+All collaborators must use **GiTex 0.5.0 or later** before sharing manual moves. Existing comments and tracking history continue to work without migration.
+
 ## Automatic sync after saving
 
-`gitex.autoSyncOnSave` defaults to `true`. A successful new comment, reply, or edit save triggers one background **pull + push** of review data, after the local save is displayed. Opening, clicking, expanding, focusing, viewing history, starting or canceling an edit, and resolving/reopening a thread do not trigger network requests. **Refresh Comments** only reloads local data. There is no polling.
+`gitex.autoSyncOnSave` defaults to `true`. A successful new comment, reply, edit, or manual location move triggers one background **pull + push** of review data, after the local save is displayed. Opening, clicking, expanding, focusing, viewing history, starting or canceling an edit, and resolving/reopening a thread do not trigger network requests. **Refresh Comments** only reloads local data. There is no polling.
 
 A sync also publishes previously saved local review events, including resolve/reopen changes. The paper branch, working files, and staging area are unaffected. Concurrent remote edits remain in history; an outdated draft is rejected if a newer revision has already been received locally. Otherwise, edits made before receiving a remote revision are combined as concurrent edits during sync.
 
@@ -129,7 +144,7 @@ Open `alice` and `bob` in separate VS Code windows with GiTex installed. Alice c
 | Local `refs/gitex/comments` | Local review history, including comments not yet shared |
 | Remote `refs/heads/gitex-comments` | Shared review history; reserved for GiTex |
 
-Thread creation, replies, edits, and state changes are immutable events with UUIDs. Synchronization combines local and remote events, then performs a normal push. If another user publishes first, GiTex fetches, combines the events, and retries without force pushing. Updates from multiple windows sharing a local repository check the previous Git ref value to prevent overwriting one another.
+Thread creation, replies, edits, manual moves, and state changes are immutable events with UUIDs. Synchronization combines local and remote events, then performs a normal push. If another user publishes first, GiTex fetches, combines the events, and retries without force pushing. Updates from multiple windows sharing a local repository check the previous Git ref value to prevent overwriting one another.
 
 Concurrent resolve and reopen events are ordered by logical clock and event ID to produce a consistent final state. Both events remain in the history. Author information comes from Git configuration; GiTex does not provide separate user authentication or signature verification.
 
@@ -146,7 +161,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.4.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.5.0.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |
@@ -169,13 +184,13 @@ make test-extension
 
 `make test-extension` uses the official test tools to download VS Code 1.90.2 and run the extension with a temporary repository and profile. On Linux CI, provide an X server or use `xvfb-run -a make test-extension`. Use `GITEX_VSCODE_VERSION=stable make test-extension` to run against the current stable release. `make package` downloads the official `vsce` tool and produces a VSIX; it does not publish to the Marketplace.
 
-Core tests cover concurrent pushes and edits, complete edit history, outdated drafts, pull without publishing, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, edited, rewrapped, deleted, or repeated passages, plus concurrent tracking-reference updates. Extension host tests also use Playwright against the test instance's local debugging port to verify actual review-panel clicks, expansion, editing, resolved visibility, replacement of the shared review tab, draft preservation, tracking-reference renewal, save-only automatic pull/push, disabled settings, and unsaved-file protection during repository import. Repository tests cover path conflicts, concurrent file creation, rollback, and preserving unrelated files.
+Core tests cover concurrent pushes and edits, complete edit history, outdated drafts, pull without publishing, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, edited, rewrapped, deleted, or repeated passages, plus concurrent tracking-reference updates and manual moves with complete before/after history. Extension host tests also use Playwright against the test instance's local debugging port to verify actual review-panel clicks, expansion, editing, resolved visibility, replacement of the shared review tab, draft preservation, tracking-reference renewal, manual cross-file relocation, save-only automatic pull/push, disabled settings, and unsaved-file protection during repository import. Repository tests cover path conflicts, concurrent file creation, rollback, and preserving unrelated files.
 
 ## Current scope
 
 - Reviews sync automatically after saving by default, or through manual commands. Live collaborative typing and automatic server notifications are not implemented.
 - Comments appear on LaTeX source. PDF annotations, semantic sentence analysis, and LaTeX compilation checks are not implemented.
-- Renamed files produce Outdated comments rather than automatic migration to the new path. Edits with insufficient similarity or ambiguous matches require manual review.
+- Renamed files are not migrated automatically; use Move Comment to Selection to reattach their threads. Edits with insufficient similarity or ambiguous matches require manual review.
 - Comment deletion and fine-grained permissions are not implemented. Users with repository write access can share edits, replies, and thread state changes. Original authorship and the editor of each revision are recorded separately.
 - Multiple workspace folders are supported, using the Git repository discovered for each folder. Open nested repositories as separate workspace folders.
 - This prototype combines events in memory and caps the combined output of each Git command at 32 MiB. Large-history optimization is future work.

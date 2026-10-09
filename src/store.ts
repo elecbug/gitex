@@ -8,8 +8,9 @@ export const REMOTE_REF = 'refs/heads/gitex-comments';
 const marker = JSON.stringify({ format: 'gitex-comments', version: 1 });
 type Entry = { event: ReviewEvent; oid: string };
 type Entries = Map<string, Entry>;
-type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string; anchor?: Anchor } |
-  { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor } | { type: 'state'; resolved: boolean };
+type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string; anchor?: Anchor; anchorBasedOn?: string } |
+  { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor; anchorBasedOn?: string } |
+  { type: 'move'; anchor: Anchor; basedOn: string } | { type: 'state'; resolved: boolean };
 
 export class ReviewStore {
   readonly git: Git;
@@ -40,10 +41,11 @@ export class ReviewStore {
   create(anchor: Anchor, body: string): Promise<string> {
     return this.append(undefined, { type: 'create', anchor, body: body.trim() });
   }
-  reply(threadId: string, body: string, anchor?: Anchor): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim(), anchor }); }
-  edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor): Promise<string> {
-    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor });
+  reply(threadId: string, body: string, anchor?: Anchor, anchorBasedOn?: string): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim(), anchor, anchorBasedOn }); }
+  edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor, anchorBasedOn?: string): Promise<string> {
+    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor, anchorBasedOn });
   }
+  move(threadId: string, anchor: Anchor, basedOn: string): Promise<string> { return this.append(threadId, { type: 'move', anchor, basedOn }); }
   setResolved(threadId: string, resolved: boolean): Promise<string> { return this.append(threadId, { type: 'state', resolved }); }
 
   private append(threadId: string | undefined, payload: Payload): Promise<string> {
@@ -54,8 +56,17 @@ export class ReviewStore {
         const old = await this.git.ref(LOCAL_REF);
         const entries = await this.read(old);
         if (threadId && !entries.has(threadId)) { throw new Error('The comment thread no longer exists locally. Refresh or sync comments.'); }
+        const thread = threadId ? materialize([...entries.values()].map(entry => entry.event)).find(thread => thread.id === threadId) : undefined;
+        if (payload.type === 'move' && payload.basedOn !== thread!.anchorRevision) {
+          throw new Error('This comment location changed while you were choosing a destination. Refresh and move it again.');
+        }
+        let anchorBasedOn: string | undefined;
+        if ((payload.type === 'reply' || payload.type === 'edit') && payload.anchor) {
+          if (payload.anchor.path !== thread!.anchor.path) { throw new Error('A GiTex tracking update cannot change the file path. The comment location changed; refresh before saving.'); }
+          anchorBasedOn = payload.anchorBasedOn ?? thread!.anchorRevision;
+          if (anchorBasedOn !== thread!.anchorRevision) { throw new Error('The comment location changed while you were editing. Your draft is preserved. Refresh before saving.'); }
+        }
         if (payload.type === 'edit') {
-          const thread = materialize([...entries.values()].map(entry => entry.event)).find(thread => thread.id === threadId);
           const comment = thread?.comments.find(comment => comment.id === payload.commentId);
           if (!comment) { throw new Error('The comment to edit does not exist in this thread.'); }
           if (comment.revisions.at(-1)!.id !== payload.basedOn) {
@@ -64,7 +75,8 @@ export class ReviewStore {
           if (comment.body === payload.body && (!payload.anchor || JSON.stringify(payload.anchor) === JSON.stringify(thread!.anchor))) { return threadId!; }
         }
         const clock = Math.max(0, ...[...entries.values()].map(entry => entry.event.clock)) + 1;
-        const event = parseEvent(JSON.stringify({ version: 1, id, threadId: threadId ?? id, clock, at: new Date().toISOString(), author, ...payload }));
+        const event = parseEvent(JSON.stringify({ version: 1, id, threadId: threadId ?? id, clock, at: new Date().toISOString(), author, ...payload,
+          ...(anchorBasedOn ? { anchorBasedOn } : {}) }));
         const oid = await this.git.text(['hash-object', '-w', '--stdin'], JSON.stringify(event));
         entries.set(id, { event, oid });
         materialize([...entries.values()].map(entry => entry.event));

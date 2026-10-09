@@ -31,6 +31,8 @@
     const resolved = element('input', undefined, label);
     resolved.type = 'checkbox'; resolved.id = 'resolved';
     label.append(document.createTextNode(' Resolved'));
+    const move = element('button', 'Move to editor selection', root);
+    move.title = 'Select destination lines in a LaTeX editor first. The whole thread moves and its history is preserved.';
     const comments = element('main', undefined, root); comments.id = 'comments';
     const form = element('form', undefined, root); form.id = 'reply-form';
     const replyLabel = element('label', 'Reply', form); replyLabel.htmlFor = 'reply';
@@ -41,6 +43,7 @@
     const trackingSummary = element('summary', 'Tracking history', tracking);
     const trackingEntries = element('div', undefined, tracking);
     const view = { key, root, comments, resolved, savedResolved: false, nodes: new Map(), error: '', trackingSummary, trackingEntries, trackingSignature: '' };
+    move.onclick = () => submit(view, { type: 'move' }, [move], () => {});
     resolved.onchange = () => submit(view, { type: 'resolve', resolved: resolved.checked }, [resolved],
       () => { resolved.checked = view.savedResolved; }, () => { resolved.checked = view.savedResolved; });
     form.onsubmit = event => {
@@ -117,15 +120,20 @@
         }
       }
       const anchors = message.review.anchorHistory;
-      const signature = anchors.map(entry => entry.id).join(',');
+      const signature = message.review.anchorRevision + ':' + anchors.map(entry => entry.id).join(',');
       if (signature !== view.trackingSignature) {
         view.trackingSignature = signature;
         view.trackingEntries.replaceChildren();
         view.trackingSummary.textContent = `Tracking history (${anchors.length} versions)`;
         anchors.forEach((entry, index) => {
           const article = element('article', undefined, view.trackingEntries);
-          element('h3', `${index === 0 ? 'Original passage' : 'Updated passage'}${index === anchors.length - 1 ? ' · Current reference' : ''}`, article);
-          element('p', `${entry.author.name} · ${new Date(entry.at).toLocaleString()} · lines ${entry.anchor.startLine + 1}–${entry.anchor.endLine + 1}`, article);
+          element('h3', `${entry.kind === 'move' ? 'Manual move' : index === 0 ? 'Original passage' : 'Updated passage'}${entry.id === message.review.anchorRevision ? ' · Current reference' : ''}`, article);
+          element('p', `${entry.author.name} · ${new Date(entry.at).toLocaleString()}`, article);
+          if (entry.from) {
+            element('p', `Previous reference: ${entry.from.path}:${entry.from.startLine + 1}–${entry.from.endLine + 1}`, article);
+            element('pre', entry.from.selected.join('\n'), article);
+          }
+          element('p', `${entry.kind === 'move' ? 'Moved to' : 'Reference'}: ${entry.anchor.path}:${entry.anchor.startLine + 1}–${entry.anchor.endLine + 1}`, article);
           element('pre', entry.anchor.selected.join('\n'), article);
         });
       }

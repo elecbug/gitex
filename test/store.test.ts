@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { createAnchor, locateAnchor } from '../src/anchor';
 import { Git } from '../src/git';
-import { parseEvent, validPath } from '../src/model';
+import { materialize, parseEvent, validPath } from '../src/model';
 import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../src/store';
 
 const paper = '\\documentclass{article}\n\\begin{document}\nA shared result.\n\\end{document}\n';
@@ -288,4 +288,96 @@ test('saving unchanged comment text can refresh its reference without redundant 
   await a.reply(id, 'Same passage', next);
   thread = (await a.threads())[0];
   assert.equal(thread.anchorHistory.length, 2);
+});
+
+test('manual moves record every previous and new location without editing comments or the paper', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Keep the review');
+  await a.reply(id, 'Keep the reply'); await a.setResolved(id, true);
+  const comments = (await a.threads())[0].comments;
+  const head = await a.head(), index = await a.git.text(['write-tree']);
+  const destination = createAnchor('appendix.tex', 'Heading\nA new passage\nSecond line\n', 1, 2, head);
+  await a.move(id, destination, id);
+  let current = (await a.threads())[0];
+  const first = current.anchorHistory.at(-1)!;
+  assert.equal(first.kind, 'move'); assert.deepEqual(first.from, anchor); assert.deepEqual(first.anchor, destination);
+  assert.equal(first.author.name, 'Alice'); assert.ok(Number.isFinite(Date.parse(first.at)));
+  await a.move(id, destination, current.anchorRevision); // Explicitly saving even the same destination is recorded.
+  current = (await a.threads())[0];
+  await a.move(id, anchor, current.anchorRevision);
+  current = (await a.threads())[0];
+  assert.equal(current.anchorHistory.filter(entry => entry.kind === 'move').length, 3);
+  assert.deepEqual(current.anchorHistory.at(-1)!.from, destination);
+  assert.deepEqual(current.comments, comments); assert.equal(current.resolved, true);
+  await a.sync(); await b.pull();
+  assert.deepEqual(await b.threads(), await a.threads());
+  assert.equal(await a.head(), head); assert.equal(await a.git.text(['write-tree']), index);
+  assert.equal(await readFile(path.join(a.root, 'main.tex'), 'utf8'), paper);
+});
+
+test('stale moves, invalid destinations, and stale automatic snapshots preserve the current location', async t => {
+  const { a, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Review');
+  const next = createAnchor('main.tex', 'New result\nAnother result\n', 1, 1, await a.head());
+  await a.move(id, next, id);
+  const current = (await a.threads())[0];
+  const tip = await a.git.ref(LOCAL_REF);
+  await assert.rejects(a.move(id, anchor, id), /location changed/);
+  await assert.rejects(a.move(id, { ...anchor, path: '../outside.tex' }, current.anchorRevision), /Invalid GiTex/);
+  await assert.rejects(a.reply(id, 'Old view', anchor, id), /location changed/);
+  assert.equal(await a.git.ref(LOCAL_REF), tip);
+  assert.deepEqual((await a.threads())[0], current);
+});
+
+test('concurrent manual moves keep their own before/after references and converge', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Shared'); await a.sync(); await b.pull();
+  const left = createAnchor('left.tex', 'Left destination', 0, 0, await a.head());
+  const right = createAnchor('right.tex', 'Right destination', 0, 0, await b.head());
+  await a.move(id, left, id); await b.move(id, right, id);
+  await a.sync(); await b.sync(); await a.pull();
+  const current = (await a.threads())[0];
+  const moves = current.anchorHistory.filter(entry => entry.kind === 'move');
+  assert.equal(moves.length, 2);
+  assert.deepEqual(new Set(moves.map(entry => entry.anchor.path)), new Set(['left.tex', 'right.tex']));
+  for (const entry of moves) { assert.deepEqual(entry.from, anchor); assert.equal(entry.basedOn, id); }
+  assert.equal(current.anchorRevision, moves.at(-1)!.id);
+  assert.deepEqual(await a.threads(), await b.threads());
+});
+
+test('older automatic snapshots cannot undo a concurrent manual move in the same or another file', async t => {
+  for (const destinationPath of ['main.tex', 'appendix.tex']) {
+    const { a, b, anchor } = await fixture(t);
+    const id = await a.create(anchor, 'Shared'); await a.sync(); await b.pull();
+    const destination = createAnchor(destinationPath, 'A manually chosen new passage', 0, 0, await a.head());
+    await a.move(id, destination, id);
+    const move = (await a.threads())[0].anchorRevision;
+    await b.reply(id, 'Increase the local clock');
+    const oldUpdate = createAnchor('main.tex', paper.replace('shared', 'old shared'), 2, 2, await b.head());
+    await b.reply(id, 'Saved offline at the old location', oldUpdate);
+    await a.sync(); await b.sync(); await a.pull();
+    let current = (await a.threads())[0];
+    assert.equal(current.anchorRevision, move); assert.deepEqual(current.anchor, destination);
+    assert.ok(current.anchorHistory.some(entry => entry.anchor.selected[0] === oldUpdate.selected[0]));
+    assert.notEqual(current.anchorHistory.at(-1)!.id, move, 'the current reference need not be the final history entry');
+    assert.deepEqual(await a.threads(), await b.threads());
+    const newer = createAnchor(destinationPath, 'A manually chosen new passage!', 0, 0, await b.head());
+    await b.reply(id, 'Saved at the new location', newer, current.anchorRevision);
+    await b.sync(); await a.pull();
+    current = (await a.threads())[0];
+    assert.deepEqual(current.anchor, newer);
+  }
+});
+
+test('malformed or cross-thread move references are rejected during materialization', () => {
+  const anchor = createAnchor('main.tex', paper, 2, 2, null);
+  const first = '11111111-1111-4111-8111-111111111111';
+  const other = '22222222-2222-4222-8222-222222222222';
+  const moved = '33333333-3333-4333-8333-333333333333';
+  const event = { version: 1, id: first, threadId: first, clock: 1, at: new Date().toISOString(), author: { name: 'Tester', email: 'tester@example.test' }, type: 'create', body: 'Comment', anchor };
+  const move = { ...event, id: moved, clock: 2, type: 'move', basedOn: other };
+  const parsed = parseEvent(JSON.stringify(move));
+  assert.throws(() => materialize([parseEvent(JSON.stringify(event)), parseEvent(JSON.stringify({ ...event, id: other, threadId: other })), parsed]), /invalid tracking revision/);
+  assert.throws(() => parseEvent(JSON.stringify({ ...move, basedOn: undefined })), /Invalid GiTex/);
+  assert.throws(() => parseEvent(JSON.stringify({ ...move, anchor: undefined })), /Invalid GiTex/);
 });

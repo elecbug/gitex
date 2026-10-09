@@ -4,8 +4,9 @@ export interface Author { name: string; email: string }
 interface BaseEvent { version: 1; id: string; threadId: string; clock: number; at: string; author: Author }
 export type ReviewEvent = BaseEvent & (
   { type: 'create'; anchor: Anchor; body: string } |
-  { type: 'reply'; body: string; anchor?: Anchor } |
-  { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor } |
+  { type: 'reply'; body: string; anchor?: Anchor; anchorBasedOn?: string } |
+  { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor; anchorBasedOn?: string } |
+  { type: 'move'; anchor: Anchor; basedOn: string } |
   { type: 'state'; resolved: boolean }
 );
 export interface CommentRevision { id: string; body: string; author: Author; at: string; basedOn?: string }
@@ -19,7 +20,8 @@ export interface ReviewComment {
 export interface ReviewThread {
   id: string;
   anchor: Anchor;
-  anchorHistory: { id: string; anchor: Anchor; author: Author; at: string }[];
+  anchorRevision: string;
+  anchorHistory: { id: string; anchor: Anchor; author: Author; at: string; kind: 'original' | 'update' | 'move'; basedOn?: string; from?: Anchor }[];
   comments: ReviewComment[];
   resolved: boolean;
 }
@@ -42,7 +44,7 @@ export function parseEvent(text: string): ReviewEvent {
     if (typeof e.body !== 'string' || !e.body.trim() || e.body.length > 100_000) { return bad(); }
   }
   if (e.type === 'create' && e.threadId !== e.id) { return bad(); }
-  if (e.type === 'create' || ((e.type === 'edit' || e.type === 'reply') && e.anchor !== undefined)) {
+  if (e.type === 'create' || e.type === 'move' || ((e.type === 'edit' || e.type === 'reply') && e.anchor !== undefined)) {
     const a = e.anchor;
     if (!a || !validPath(a.path) ||
         !(a.baseCommit === null || (typeof a.baseCommit === 'string' && objectId.test(a.baseCommit))) ||
@@ -52,8 +54,11 @@ export function parseEvent(text: string): ReviewEvent {
         !strings(a.before) || a.before.length > 3 || !strings(a.after) || a.after.length > 3 ||
         !Number.isSafeInteger(a.occurrences) || a.occurrences < 1) { return bad(); }
   }
+  if ((e.type === 'edit' || e.type === 'reply') && e.anchorBasedOn !== undefined && (!e.anchor || !uuid.test(e.anchorBasedOn))) { return bad(); }
   if (e.type === 'state') {
     if (typeof e.resolved !== 'boolean') { return bad(); }
+  } else if (e.type === 'move') {
+    if (!uuid.test(e.basedOn)) { return bad(); }
   } else if (e.type === 'edit') {
     if (!uuid.test(e.commentId) || !uuid.test(e.basedOn)) { return bad(); }
   } else if (e.type !== 'reply' && e.type !== 'create') { return bad(); }
@@ -65,18 +70,34 @@ export function materialize(events: ReviewEvent[]): ReviewThread[] {
   const threads = new Map<string, ReviewThread>();
   const comments = new Map<string, { threadId: string; comment: ReviewComment }>();
   const applied = new Map<string, ReviewEvent>();
+  const references = new Map<string, { threadId: string; anchor: Anchor; clock: number; moveId: string }>();
+  const activeMove = new Map<string, string>();
   for (const e of ordered) {
-    if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, anchorHistory: [], comments: [], resolved: false }); }
+    if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, anchorRevision: e.id, anchorHistory: [], comments: [], resolved: false }); }
   }
   for (const e of ordered) {
     const thread = threads.get(e.threadId);
     if (!thread) { throw new Error('A GiTex comment references a missing thread.'); }
-    if ((e.type === 'create' || e.type === 'reply' || e.type === 'edit') && e.anchor) {
-      if (e.anchor.path !== thread.anchor.path) { throw new Error('A GiTex tracking update cannot change the file path.'); }
-      if (!thread.anchorHistory.length || JSON.stringify(e.anchor) !== JSON.stringify(thread.anchor)) {
-        thread.anchorHistory.push({ id: e.id, anchor: e.anchor, author: e.author, at: e.at });
-        thread.anchor = e.anchor;
+    if ((e.type === 'create' || e.type === 'reply' || e.type === 'edit' || e.type === 'move') && e.anchor) {
+      const basedOn = e.type === 'move' ? e.basedOn : e.type === 'create' ? undefined : e.anchorBasedOn ?? e.threadId;
+      const base = basedOn ? references.get(basedOn) : undefined;
+      if (basedOn && (!base || base.threadId !== e.threadId || base.clock >= e.clock)) {
+        throw new Error('A GiTex location change references an invalid tracking revision.');
       }
+      if (e.type !== 'create' && e.type !== 'move' && e.anchor.path !== base!.anchor.path) {
+        throw new Error('A GiTex tracking update cannot change the file path.');
+      }
+      const moveId = e.type === 'move' || e.type === 'create' ? e.id : base!.moveId;
+      references.set(e.id, { threadId: e.threadId, anchor: e.anchor, clock: e.clock, moveId });
+      if (e.type === 'create' || e.type === 'move') { activeMove.set(e.threadId, moveId); }
+      const changed = JSON.stringify(e.anchor) !== JSON.stringify(thread.anchor);
+      const recorded = !thread.anchorHistory.length || changed || e.type === 'move';
+      if (recorded) {
+        thread.anchorHistory.push({ id: e.id, anchor: e.anchor, author: e.author, at: e.at,
+          kind: e.type === 'create' ? 'original' : e.type === 'move' ? 'move' : 'update', basedOn, from: e.type === 'move' ? base!.anchor : undefined });
+      }
+      // Automatic snapshots from an older location must not undo a concurrent manual move.
+      if (activeMove.get(e.threadId) === moveId && recorded) { thread.anchor = e.anchor; thread.anchorRevision = e.id; }
     }
     if (e.type === 'state') { thread.resolved = e.resolved; }
     else if (e.type === 'edit') {
@@ -88,7 +109,7 @@ export function materialize(events: ReviewEvent[]): ReviewThread[] {
       }
       target.comment.body = e.body;
       target.comment.revisions.push({ id: e.id, body: e.body, author: e.author, at: e.at, basedOn: e.basedOn });
-    } else {
+    } else if (e.type !== 'move') {
       const revision = { id: e.id, body: e.body, author: e.author, at: e.at };
       const comment = { ...revision, revisions: [revision] };
       thread.comments.push(comment);

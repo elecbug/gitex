@@ -5,6 +5,7 @@ import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { Git } from '../../src/git';
 import { ReviewStore } from '../../src/store';
 import { reviewTests } from './review';
+import { moveTests } from './move';
 
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('gitex-local.gitex');
@@ -119,5 +120,6 @@ export async function run(): Promise<void> {
   assert.match(published, /refs\/heads\/gitex-comments/);
   assert.equal(await store.head(), head);
   assert.equal(document.isDirty, true, 'sync must preserve unsaved editor changes');
+  await moveTests(app, store);
   console.log('GiTex extension host: applying repositories, unsaved-file protection, save-only sync, editing, history, drafts, and anchoring passed.');
 }

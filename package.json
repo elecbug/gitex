@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -134,6 +134,11 @@
       {
         "command": "gitex.openThread",
         "title": "GiTex: Open Comment"
+      },
+      {
+        "command": "gitex.moveComment",
+        "title": "GiTex: Move Comment to Selection",
+        "icon": "$(move)"
       }
     ],
     "views": {
@@ -154,6 +159,11 @@
       "editor/context": [
         {
           "command": "gitex.addComment",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/",
+          "group": "gitex"
+        },
+        {
+          "command": "gitex.moveComment",
           "when": "resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/",
           "group": "gitex"
         }
@@ -192,6 +202,11 @@
           "command": "gitex.reopen",
           "when": "commentController == gitex && commentThread == gitex-resolved",
           "group": "navigation"
+        },
+        {
+          "command": "gitex.moveComment",
+          "when": "commentController == gitex && !commentThreadIsEmpty",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -209,6 +224,11 @@
           "command": "gitex.reopen",
           "when": "view == gitex.comments && viewItem == gitex-resolved",
           "group": "inline"
+        },
+        {
+          "command": "gitex.moveComment",
+          "when": "view == gitex.comments",
+          "group": "navigation"
         }
       ],
       "commandPalette": [
@@ -300,7 +320,7 @@
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "description": "Fetch and push comments once in the background after creating a comment, replying, or saving an edit. Opening, clicking, expanding, or canceling comments does not access the remote."
+          "description": "Fetch and push comments once in the background after creating a comment, replying, or saving an edit or manual location move. Opening, clicking, expanding, or canceling comments does not access the remote."
         }
       }
     }

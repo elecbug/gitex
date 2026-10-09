@@ -5,6 +5,7 @@ import { ReviewThread } from './model';
 export type ReviewAction = { type: 'ready' | 'source' } |
   { type: 'edit'; commentId: string; body: string; basedOn: string; requestId: string } |
   { type: 'reply'; body: string; requestId: string } |
+  { type: 'move'; requestId: string } |
   { type: 'resolve'; resolved: boolean; requestId: string };
 
 /** Review editing and history with drafts preserved across updates. */
@@ -69,6 +70,7 @@ function validAction(value: unknown): value is ReviewAction {
   if (event.type === 'ready') { return true; }
   if (typeof event.key !== 'string') { return false; }
   if (event.type === 'source') { return true; }
+  if (event.type === 'move') { return typeof event.requestId === 'string'; }
   if (event.type === 'resolve') { return typeof event.resolved === 'boolean' && typeof event.requestId === 'string'; }
   if (typeof event.body !== 'string' || !event.body.trim() || event.body.length > 100_000 || typeof event.requestId !== 'string') { return false; }
   return event.type === 'reply' || (event.type === 'edit' && typeof event.commentId === 'string' && typeof event.basedOn === 'string');

@@ -41,6 +41,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private timer?: ReturnType<typeof setTimeout>;
   private refreshing: Promise<void> = Promise.resolve();
   private disposed = false;
+  private lastEditor = vscode.window.activeTextEditor;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.status.command = 'gitex.sync';
@@ -58,6 +59,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       vscode.workspace.onDidOpenTextDocument(document => { if (document.uri.scheme === 'file') { this.schedule(); } }),
       vscode.workspace.onDidChangeTextDocument(event => { if (event.contentChanges.length && supported.test(event.document.uri.fsPath)) { this.schedule(); } }),
       vscode.workspace.onDidSaveTextDocument(() => this.schedule()),
+      vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) { this.lastEditor = editor; } }),
       vscode.window.onDidChangeWindowState(event => { if (event.focused) { this.schedule(); } }),
       vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('gitex')) { this.schedule(); } })
     );
@@ -76,6 +78,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.command('gitex.saveComment', (comment: NativeReviewComment) => this.saveComment(comment));
     this.command('gitex.cancelEdit', (comment: NativeReviewComment) => this.cancelEdit(comment));
     this.command('gitex.commentHistory', (comment: NativeReviewComment) => this.commentHistory(comment));
+    this.command('gitex.moveComment', (target?: ThreadItem | vscode.CommentThread) => this.moveComment(target));
     this.command('gitex.refresh', () => this.refresh());
     this.command('gitex.pull', () => this.pull());
     this.command('gitex.sync', () => this.sync());
@@ -159,7 +162,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
           if (!cached || cached.version !== document.version) {
             cached = { version: document.version, entries: new Map() }; this.locations.set(document, cached);
           }
-          const reference = review.anchorHistory.at(-1)!.id;
+          const reference = review.anchorRevision;
           const previous = cached.entries.get(review.id);
           location = previous?.reference === reference ? previous.location : locateAnchor(review.anchor, document.getText());
           cached.entries.set(review.id, { reference, location });
@@ -176,6 +179,14 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       visible.add(item.key);
       const range = new vscode.Range(location.startLine, 0, location.endLine, 0);
       let thread = this.nativeThreads.get(item.key);
+      if (thread && thread.uri.toString() !== item.uri.toString()) {
+        if (thread.comments.some(comment => comment.mode === vscode.CommentMode.Editing)) {
+          thread.label = 'GiTex · Location changed · draft preserved';
+          this.threadItems.set(thread, item);
+          continue;
+        }
+        thread.dispose(); this.nativeThreads.delete(item.key); thread = undefined;
+      }
       if (!thread) {
         thread = this.controller.createCommentThread(item.uri, range, []);
         this.nativeThreads.set(item.key, thread);
@@ -246,16 +257,16 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     if (native) { native.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded; }
   }
 
-  private async currentAnchor(item: ThreadItem): Promise<Anchor | undefined> {
+  private async currentAnchor(item: ThreadItem): Promise<{ anchor: Anchor; basedOn: string } | undefined> {
     const review = (await item.repository.store.threads()).find(review => review.id === item.review.id);
     if (!review) { return undefined; }
     const head = await item.repository.store.head();
     let document: vscode.TextDocument;
-    try { document = await this.document(item.uri, item.repository); } catch { return undefined; }
+    try { document = await this.document(vscode.Uri.file(path.join(item.repository.store.root, review.anchor.path)), item.repository); } catch { return undefined; }
     const text = document.getText();
     const location = locateAnchor(review.anchor, text);
     if (location.kind !== 'attached') { return undefined; }
-    return createAnchor(review.anchor.path, text, location.startLine, location.endLine, head);
+    return { anchor: createAnchor(review.anchor.path, text, location.startLine, location.endLine, head), basedOn: review.anchorRevision };
   }
 
   private async reply(reply: vscode.CommentReply): Promise<void> {
@@ -263,7 +274,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const item = this.threadItems.get(reply.thread);
     let repository = item?.repository;
     if (item) {
-      await item.repository.store.reply(item.review.id, reply.text, await this.currentAnchor(item));
+      const reference = await this.currentAnchor(item);
+      await item.repository.store.reply(item.review.id, reply.text, reference?.anchor, reference?.basedOn);
     }
     else {
       repository = this.repositoryFor(reply.thread.uri);
@@ -285,6 +297,40 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
 
   private async checkResolved(items: readonly [ThreadItem, vscode.TreeItemCheckboxState][]): Promise<void> {
     for (const [item, state] of items) { await this.setResolved(item, state === vscode.TreeItemCheckboxState.Checked); }
+  }
+
+  private async moveComment(target?: ThreadItem | vscode.CommentThread): Promise<void> {
+    const editor = vscode.window.activeTextEditor ?? this.lastEditor;
+    if (!editor || !vscode.window.visibleTextEditors.includes(editor) || editor.document.uri.scheme !== 'file' || !supported.test(editor.document.uri.fsPath)) {
+      throw new Error('Select the destination lines in a visible LaTeX source editor, then move the comment to that selection.');
+    }
+    const document = editor.document;
+    const version = document.version;
+    const text = document.getText();
+    const selection = editor.selection;
+    await this.discover();
+    const repository = this.repositoryFor(document.uri);
+    if (!repository) { throw new Error('The destination must be in the same open Git repository as the comment.'); }
+    const targetItem = target && ('review' in target ? target : this.threadItems.get(target));
+    if (targetItem && targetItem.repository.store.root !== repository.store.root) { throw new Error('Comments can only move within the same Git repository.'); }
+    await this.document(document.uri, repository);
+    const relative = path.relative(repository.store.root, document.uri.fsPath).split(path.sep).join('/');
+    if (!validPath(relative)) { throw new Error('This destination cannot be annotated.'); }
+    const end = selection.end.line > selection.start.line && selection.end.character === 0 ? selection.end.line - 1 : selection.end.line;
+    const anchor = createAnchor(relative, text, selection.start.line, end, await repository.store.head());
+    const reviews = await repository.store.threads();
+    const review = targetItem ? reviews.find(review => review.id === targetItem.review.id) :
+      (await vscode.window.showQuickPick(reviews.map(review => ({ label: review.comments[0].body.split('\n')[0].slice(0, 100),
+        description: `${review.anchor.path}:${review.anchor.startLine + 1}–${review.anchor.endLine + 1}${review.resolved ? ' · Resolved' : ''}`, review })),
+        { placeHolder: `Move a comment to ${relative}:${anchor.startLine + 1}–${anchor.endLine + 1}` }))?.review;
+    if (!review) { if (targetItem) { throw new Error('This comment is no longer available. Refresh comments.'); } return; }
+    if (document.isClosed || document.version !== version) { throw new Error('The destination text changed while choosing a comment. Select the destination again.'); }
+    const key = `${repository.store.root}:${review.id}`;
+    if ([...this.nativeComments.values()].some(comment => comment.threadKey === key && comment.mode === vscode.CommentMode.Editing)) {
+      throw new Error('Save or cancel the inline comment edit before moving this thread. Its draft has been preserved.');
+    }
+    await repository.store.move(review.id, anchor, review.anchorRevision);
+    await this.afterSave(repository);
   }
 
   private async open(item: ThreadItem): Promise<void> {
@@ -351,7 +397,10 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const body = typeof native.body === 'string' ? native.body : native.body.value;
     const basedOn = native.editingRevision;
     const { item } = await this.commentTarget(native);
-    try { await item.repository.store.edit(item.review.id, native.commentId, body, basedOn, await this.currentAnchor(item)); }
+    try {
+      const reference = await this.currentAnchor(item);
+      await item.repository.store.edit(item.review.id, native.commentId, body, basedOn, reference?.anchor, reference?.basedOn);
+    }
     catch (error) {
       // VS Code closes the inline input as soon as Save is clicked, before async validation finishes.
       // Restore the saved preview and retain the rejected draft in the review panel's editor.
@@ -447,8 +496,12 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
 
   private async panelAction(item: ThreadItem, action: ReviewAction): Promise<void> {
     if (action.type === 'ready') { this.renderPanels(); return; }
-    if (action.type === 'edit') { await item.repository.store.edit(item.review.id, action.commentId, action.body, action.basedOn, await this.currentAnchor(item)); }
-    else if (action.type === 'reply') { await item.repository.store.reply(item.review.id, action.body, await this.currentAnchor(item)); }
+    if (action.type === 'edit' || action.type === 'reply') {
+      const reference = await this.currentAnchor(item);
+      if (action.type === 'edit') { await item.repository.store.edit(item.review.id, action.commentId, action.body, action.basedOn, reference?.anchor, reference?.basedOn); }
+      else { await item.repository.store.reply(item.review.id, action.body, reference?.anchor, reference?.basedOn); }
+    }
+    else if (action.type === 'move') { await this.moveComment(item); return; }
     else if (action.type === 'resolve') { await this.setResolved(item, action.resolved); return; }
     else if (action.type === 'source') { await this.open(item); return; }
     await this.afterSave(item.repository);
