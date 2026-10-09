@@ -74,7 +74,7 @@ export async function repositoryTests(app: any, existing: ReviewStore): Promise<
   await select(path.join(first, 'main.tex'));
   assertScope(first);
   assert.equal(app.tree.description, 'Papers/research/2026/first');
-  assert.equal(app.getChildren().find((item: any) => item.review.id === shadow).location.kind, 'outdated');
+  assert.equal(app.getChildren().find((item: any) => item.review.id === shadow).location.kind, 'pending');
   const aKey = `${first}:${a.id}`;
   const native = app.nativeThreads.get(aKey).comments[0];
   await app.editComment(native); native.body = 'Inline draft belonging to the first repository';

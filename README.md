@@ -2,24 +2,24 @@
 
 English | [한국어](README.kr.md)
 
-A VS Code extension for sharing line comments on LaTeX papers through Git. Use it alongside your existing editing, compilation, and PDF preview setup, including LaTeX Workshop.
+A VS Code extension for sharing passage comments on LaTeX papers through Git. Use it alongside your existing editing, compilation, and PDF preview setup, including LaTeX Workshop.
 
 ## Features
 
 - Open or clone a Git repository, or apply one directly to the current folder when no existing paths conflict.
 - Discover repositories recursively under workspace folders and switch comments and sync targets with the selected source file.
 - Select or add a remote for sharing comments.
-- Comment on one or more lines in `.tex`, `.bib`, `.sty`, `.cls`, and `.ltx` files.
+- Comment on exactly selected text, or the current line when nothing is selected, in `.tex`, `.bib`, `.sty`, `.cls`, and `.ltx` files.
 - Reply to comments and resolve or reopen threads with checkboxes in Explorer and the review panel. Resolved threads stay in Explorer and are hidden in the paper editor.
 - Edit comments and replies while preserving the original text and every edit in history.
 - Automatically pull and push comments once after creating a comment, replying, or saving an edit; enabled by default and configurable.
 - Browse threads in **GiTex Comments** in the Explorer and VS Code's **Comments** panel.
-- Follow passages through small text edits, whitespace changes, line rewrapping, and movement using text similarity and surrounding context.
-- Renew tracking references only with strong evidence, keep a fixed identity to limit drift, and preserve previous references in history.
-- Manually move a thread to selected source lines, including another file in the same repository, with a complete move history.
+- Follow exact ranges through editor insertions, deletions, same-file cut and paste, and undo/redo.
+- Keep the original selection when a target splits; show the comment on the leading surviving fragment.
+- Manually move a thread to selected source text, including another file in the same repository, with a complete move history.
 - Reuse one review tab when switching threads, preserving unsaved edits and replies while the tab stays open.
-- Save one preceding and following sentence, estimate missing passages as **Uncertain**, and keep untraceable comments **Outdated** in Explorer.
-- Keep separate shared and local tracking references, updating local context as you edit and recording an explicit document-end boundary for final passages.
+- Retain removed targets as **Uncertain**, with their original text and deletion position.
+- Keep comments **Pending document** when reviews arrive before the paper, and prompt the user to pull the source.
 - Save comments offline and synchronize reviews from multiple users through a central bare repository.
 
 Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Sync Comments** and automatic sync after saving both receive and publish review data. They leave your working files, current branch, and staging area unchanged.
@@ -36,7 +36,7 @@ Green boxes (**Edited Data**) identify data edited by the depicted user. Blue bo
 | --- | --- |
 | **Git Bare Repository** | The shared remote, hosted as a bare repository or on a Git hosting service such as GitHub. Each user has a local working copy. |
 | **Main Branch** | The paper's regular branch, such as `main`, containing LaTeX sources, bibliography files, and figures. Paper commits, pulls, pushes, and merges use ordinary Git or VS Code Source Control. |
-| **GiTex Branch** | The reserved remote branch `gitex-comments` (`refs/heads/gitex-comments`). It stores immutable events for comments, replies, edits, location changes, and resolved states. Local review history lives in `refs/gitex/comments`. |
+| **GiTex Branch** | The reserved remote branch `gitex-comments` (`refs/heads/gitex-comments`). It stores immutable events for comments, replies, edits, location changes, and resolved states, plus deduplicated annotated-document snapshots. Local review history lives in `refs/gitex/comments`. |
 
 The collaboration cycle in the diagram works as follows:
 
@@ -53,7 +53,7 @@ Automatic sync runs once after saving a comment, reply, edit, or manual location
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.11.0.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.12.0.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -63,15 +63,15 @@ You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaT
    ```
 
 4. GiTex uses `origin` by default. Run **GiTex: Connect Repository** to choose another remote or add one.
-5. Select lines in a paper file and press **Ctrl+Shift+/** (**Cmd+Shift+/** on macOS) to enter a comment. With no selection, the comment applies to the current line. You can also use **GiTex: Add Line Comment** in the editor context menu or the comment button in the editor gutter. Empty or whitespace-only lines have no new-comment gutter button, and an entirely blank selection is rejected before the input opens. Select at least one line containing text.
+5. Drag to select the target text in a paper file and press **Ctrl+Shift+/** (**Cmd+Shift+/** on macOS) to enter a comment. With no selection, the comment applies to the entire current line. You can also use **GiTex: Add Comment** in the editor context menu or the comment button in the editor gutter. Empty or whitespace-only lines have no new-comment gutter button, and an entirely blank selection is rejected before the input opens. A whitespace-only selection inside a nonblank line is also rejected.
 6. Saving a comment, reply, or edit automatically syncs reviews in the background. Use **GiTex: Fetch Comments** to receive reviews without publishing, or **GiTex: Sync Comments** to receive and publish manually.
 7. Commit and synchronize changes to the paper itself through Source Control.
 
 Expanded inline threads also have a **Sync** button beside **Reply**. It performs the same pull + push as Explorer's **Sync Comments**, synchronizing all saved review events in that thread's repository, even when automatic sync is disabled. To protect unsent replies, this button is enabled only while the reply field is empty; you can use Explorer's **Sync Comments** while drafting a reply.
 
-You can comment on unsaved edits as long as the file already exists on disk. If a collaborator has not received the commented passage yet, its thread appears as Uncertain or Outdated, with the original excerpt available. Initial selections cover whole source lines; tracking can retain a narrower logical range within those lines.
+You can comment on unsaved edits as long as the file already exists on disk. The exact selected text is saved, including partial first and last lines. If a collaborator has not received the annotated document version, the thread stays **Pending document** outside their editor until they pull the paper.
 
-The shortcut applies when the text editor has focus in an editable local `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` file. To customize it, search for `GiTex: Add Line Comment` in VS Code's Keyboard Shortcuts.
+The shortcut applies when the text editor has focus in an editable local `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` file. To customize it, search for `GiTex: Add Comment` in VS Code's Keyboard Shortcuts.
 
 Network authentication uses Git's SSH agent or HTTPS credential helper. Check that `git ls-remote origin` succeeds in a terminal in the same environment. You need permission to read and write the remote `gitex-comments` branch.
 
@@ -79,7 +79,7 @@ Network authentication uses Git's SSH agent or HTTPS credential helper. Check th
 
 GiTex searches every local workspace folder recursively, including nested repositories. The workspace folder itself does not need to be a Git repository. For example, opening `papers/` is enough to work with both `papers/project-a/main.tex` and `papers/group/project-b/main.tex`; select a file to use its repository. The nearest enclosing Git working tree wins, so a submodule or nested repository keeps its own review data. Worktrees with a `.git` file are also recognized.
 
-**GiTex Comments** lists all threads in the selected file's repository, including resolved and outdated threads. Its heading identifies the repository. Inline comments, the status count, **Connect Repository**, **Fetch Comments**, and **Sync Comments** follow the same selection. Selecting a file outside a workspace Git working tree clears the comment list. Moving focus into Explorer or the review tab retains the source selection; opening GiTex history retains the corresponding repository.
+**GiTex Comments** lists all threads in the selected file's repository, including resolved and pending threads. Its heading identifies the repository. Inline comments, the status count, **Connect Repository**, **Fetch Comments**, and **Sync Comments** follow the same selection. Selecting a file outside a workspace Git working tree clears the comment list. Moving focus into Explorer or the review tab retains the source selection; opening GiTex history retains the corresponding repository.
 
 The existing review tab keeps the thread you opened, with its repository shown above the comments. Selecting another thread reuses that tab. Drafts and pending saves stay bound to their original repository when you switch files, and switching alone never fetches or pushes comments. Settings such as `gitex.remote` and `gitex.autoSyncOnSave` are inherited from the containing workspace folder; nested repositories in that folder share those settings.
 
@@ -91,13 +91,13 @@ Use **Edit Comment** on an inline comment or reply, change its text, then select
 
 If an inline save fails, GiTex opens the review panel with your unsaved draft so you can recover it even though VS Code has closed the inline input.
 
-Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. Selecting another thread replaces the content of the same tab; switching back restores its unsaved edit/reply drafts and expanded sections while the tab remains open. It supports editing, replies, and expandable **History** sections. **Open source** returns to the associated passage; **Open saved excerpt** opens the saved text when the location is outdated. Comment deletion is not provided.
+Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. Selecting another thread replaces the content of the same tab; switching back restores its unsaved edit/reply drafts and expanded sections while the tab remains open. It supports editing, replies, and expandable **History** sections. **Open source** returns to the associated passage; **Open saved excerpt** opens the saved text while the document is pending. Comment deletion is not provided.
 
-Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.11.0. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
+Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. Existing comments remain readable in 0.12.0. Upgrade all collaborators to GiTex 0.12.0 before sharing new document snapshots.
 
 ## Review panel layout
 
-The review panel follows VS Code's light, dark, and high-contrast themes and adapts to narrow editor splits. The top card shows the repository, source path, current line range, and attachment status. **Saved reference** expands the passage used for tracking; it is a saved snapshot, so it may differ from a passage matched after recent edits. Source navigation, manual movement, and the **Resolved** checkbox sit together beneath it.
+The review panel follows VS Code's light, dark, and high-contrast themes and adapts to narrow editor splits. The top card shows the repository, source path, current line range, and attachment status. **Saved reference** expands the current shared target and **Original selection** preserves its initial extent; it is a saved snapshot, so it may differ from a passage matched after recent edits. Source navigation, manual movement, and the **Resolved** checkbox sit together beneath it.
 
 Each comment shows its author, timestamp, and edited marker. Edit history and tracking history open on demand, with the newest entries first and the current version marked. On wider panels, manual moves show the previous and new references side by side. Switching threads preserves drafts, expanded sections, and scroll position while the tab stays open.
 
@@ -109,58 +109,17 @@ Check **Resolved** in the review panel, or the checkbox beside a thread in **GiT
 
 Resolving a thread with an unsaved inline edit keeps the draft recoverable in the review panel. The old `gitex.showResolved` setting is deprecated and no longer filters either view: resolved threads always stay in Explorer and never show inline. A resolve/reopen change is saved locally and shared on the next comment save or manual **Sync Comments**, preserving the save-only automatic-sync rule.
 
-## Tracking through text edits
+## Tracking through editor edits
 
-See [Anchor tracking design and implementation](docs/anchor-tracking.md) for the matching algorithm, saved/local references, estimates, display rules, and compatibility details.
+GiTex 0.12.0 follows ranges through VS Code's edit events. Text inserted before a selection shifts its endpoints; text appended at its end stays outside the comment. A same-file cut followed by an exact paste moves the range to the pasted position. Copies do not move attached comments. Undo and redo restore previous ranges.
 
-New tracking references save the selected lines and one preceding and one following sentence in the optional `sentenceContext` field. Sentences can span multiple lines; whitespace and CRLF are normalized. Context does not require final punctuation: a nearby paragraph or file boundary also ends a valid excerpt, so `랄랄루` after a selected `헬로` is retained. A fragment clipped by the 64-line search window is still excluded. Short excerpts can estimate a missing passage when an exact, unambiguous pair of surrounding contexts survives; a short fragment alone remains insufficient. Blank lines are skipped to find the next available sentence within 64 lines on each side. Named LaTeX headings such as `\section*{작은 생각}` can also supply context; stars, optional short titles, nested formatting, and trailing labels are supported. Heading comparisons use their titles, not the shared command syntax. Bare structural commands such as `\begin`/`\end` and LaTeX comments are excluded. Extraction skips oversized blocks and stores at most 4,096 characters per context. Unavailable context stays empty. The existing `before`/`after` fields still retain up to three lines each.
+A line break or whitespace inserted inside the target keeps one multi-line range. Other inserted text splits it: GiTex shows the comment on the leading surviving fragment while retaining the complete **Original selection** and the other fragments. Replies and edits can publish the current reference without replacing that original identity. Only an explicit manual move establishes a new identity; previous identities remain in **Tracking history**.
 
-GiTex 0.9.0 keeps two references:
+When the entire target is deleted, an **Uncertain** marker retains its edit position. When reviews arrive ahead of the paper, **Pending document** appears in Explorer and Review and the thread is hidden from the editor. Pull the paper through Source Control; **Sync Comments** only receives and publishes reviews. GiTex checks the exact current document or the paper branch's history before replaying changes from a newly received reference.
 
-| Reference | When it changes | Where it lives |
-| --- | --- | --- |
-| **Saved reference** | Creating a comment, saving a reply/edit eligible for reference renewal, or manually moving the thread. | Immutable Git review events, shared with collaborators and retained in **Tracking history**. |
-| **Local context** | Editing the source while the Attached passage also meets the stricter renewal rules below. It captures the logical passage and surrounding context. | VS Code workspace storage for this local repository; never pushed through Git. Unsaved source changes update session memory only. Saving the source persists the last reliable reference for later sessions. |
+Comment metadata now includes a deduplicated snapshot of the whole annotated source document, including unsaved source edits. These snapshots establish document versions across clients. Existing events remain readable, but all collaborators must use **GiTex 0.12.0 or later** once the metadata archive uses format 2. Older comments without a recoverable source snapshot may require **Move to editor selection**.
 
-Tracking checks both references. Local context can recover a passage or estimate its location after the shared text or surroundings no longer match; these results show **Local context** in the review panel, Explorer, and inline caption. When shared and local references point to disjoint positions, GiTex retains both as **Uncertain** candidates instead of hiding the thread as Outdated. Both positions are marked as **Saved reference candidate** or **Local context candidate**. Overlapping estimates remain a single result; the stronger result wins, with recent local spacing breaking ties. **Uncertain** and **Outdated** results never replace the last reliable local reference. A new shared reference, including a manual move, invalidates local hints based on the previous revision. Expand **Saved reference** and **Local context** in the review panel to compare them. Local context is a replaceable hint, not an additional shared history entry; source editing does not create review events or trigger sync.
-
-Final passages also store an optional `afterBoundary`: **End of document** for `\end{document}`, or **End of file** when no document terminator is present. Blank lines, comments, and closing environment/label lines can precede that boundary. Text after `\end{document}` is excluded from following-sentence context. If the passage disappears, a distinctive preceding context plus the nearby saved end boundary can produce **Uncertain**, even without a following sentence. The end boundary alone is insufficient, and a saved document terminator must still be present.
-
-GiTex tries exact text, then whitespace-normalized and similar text, then surrounding context alone. For ordinary passages, attachment requires at least 74% text similarity with supporting context, or 86% without it. Short passages use stricter thresholds. These are text comparisons, not semantic matching.
-
-**Attached does not automatically authorize a reference update.** Since 0.11.0, creation or the last explicit manual move establishes a fixed identity. Every local or shared renewal compares directly with that identity, even after repeated comment saves or restarts. Exact normalized identity matches may refresh context. Otherwise, renewal requires at least 90% similarity to the fixed identity; changed text also needs at least 90% similarity to the previous reference and distinctive, unchanged context on both sides, or preceding context plus a saved end boundary. An unchanged previous reference can refresh context if it still passes the identity check. Short identities permit exact renewal only. A weaker attachment remains visible and comments still save, while the reference stays unchanged. Use **Move to editor selection** to confirm a substantial rewrite and establish a new identity.
-
-When a longer candidate adds text after the original passage, GiTex aligns the entire reference with the corresponding prefix and excludes the appended suffix from similarity. Insertions, deletions, and substitutions within that prefix still count as edits. The endpoint follows the alignment rather than a fixed character count; suffix-only lines are excluded from the attached range. The physical **Source Range** remains line-based, while the **Logical Anchor Range** preserves the owned text and its optional UTF-16 columns. When `A` becomes `A′ + B` on one line, an eligible renewal stores only `A′`, excluding `B` from both local and shared reference text. Same-line suffix text can become following context. Ambiguous copies still require distinguishing context. The same prefix comparison helps match distinctive prose context; short context and LaTeX headings retain their stricter rules.
-
-| Tracking result | Meaning | Display |
-| --- | --- | --- |
-| **Attached** | The original passage is found exactly or with sufficient similarity. | Normal inline comment; approximate matches show **Similar text**. |
-| **Uncertain** | The passage cannot be matched, but a context pair, a saved end boundary with preceding context, or one unique identifying context with saved spacing provides an estimated location. | A muted marker on an existing candidate line, or an unnumbered virtual row for a missing line. Diverging saved/local candidates are both shown; Explorer retains one thread. |
-| **Outdated** | Neither identity nor location can be determined reliably. | Listed in Explorer without a source marker. |
-
-Context-only tracking first looks for a unique ordered pair with a small intervening gap. Short contexts require exact text matches (allowing terminal punctuation changes); stronger contexts also tolerate small edits and rewrapping. A preceding heading plus short following prose can be enough. Blank lines do not count as intervening prose, and saved relative spacing helps place the marker within the estimated interval. When one side disappears, one unique identifying context can retain a lower-confidence estimate if its distance from the passage was saved. Repeated LaTeX structures, heading-only pairs, reversed or distant context pairs, and ambiguous candidates remain unresolved. A saved end boundary can also support identifying preceding context. The returned `confidence` is a heuristic score, not a calibrated probability. `Uncertain` and its estimated line are computed from the current document; they are never saved as permanent thread states.
-
-Hover over the dashed marker to see the saved reference and open the review tab. The review tab labels the estimated location, expands **Saved reference**, and offers **Open estimated location**. **Surrounding sentences** and **Tracking history** show the saved context. To confirm a new target, select its source lines and use **Move to editor selection**; this records a manual move with the old and new references. Resolved threads remain hidden in the source editor in every tracking state.
-
-Saving an edit or reply renews the shared reference only when the Attached passage passes the stricter renewal policy. The snapshot includes the logical text and bounds, physical source lines, surrounding sentences, end boundary, and document hash, including eligible unsaved source edits. Opening a comment, typing in the paper, resolving, or canceling an edit does not rewrite the shared reference. Weaker attachments, **Uncertain**, and **Outdated** keep the previous reference while allowing comment edits and replies to save. An estimated location becomes a new shared reference only through an explicit move or a later eligible comment save.
-
-The optional `logicalRange` field and fixed identity reconstructed from existing events require no migration. Existing snapshots remain unchanged. Older clients can read the event format but do not enforce logical bounds or drift protection; use **GiTex 0.11.0 or later** across collaborators. If a previous version already expanded or drifted a reference, confirm the intended target with a manual move.
-
-Existing review events need no migration. Legacy anchors continue using their saved three-line context, including conservative context-only estimates when that context is sufficient. Opening or syncing old reviews never rewrites their history. Their next eligible comment save or manual move adds sentence context while preserving the old reference. The event format stays at version 1, and older clients can read the optional field but do not display the new tracking state; use GiTex 0.8.0 or later for this behavior.
-
-Starting in 0.8.1, empty sentence fields from 0.8.0 also fall back to available saved line context, including named headings. Context that was never saved cannot be reconstructed from the current document; save a comment while attached or manually reconnect it to capture the improved context.
-
-Version 0.9.0 also recognizes a document terminator already present in legacy saved line context without rewriting that event. Older data lacking a saved boundary remains valid; a reliable attached match can establish local context, and the next eligible comment save or manual move can add the boundary to the shared reference. The event format remains version 1. Older clients can read the optional boundary field, but local tracking and end-boundary estimates require 0.9.0 or later.
-
-The review panel's **Tracking history** shows the original passage and later reference snapshots with authors and timestamps. Each snapshot is part of the same immutable event as the saved edit/reply and is shared with comments. Concurrent updates preserve both snapshots and choose the current one deterministically. A failed or stale comment save cannot change its reference.
-
-In 0.9.1, previously empty sentence fields can gain unpunctuated context in **Local context** when the passage is reliably attached. Existing **Saved reference** snapshots and history stay unchanged; save an eligible comment/reply or move it manually to renew the shared reference.
-
-Version 0.9.2 favors **Uncertain** whenever usable localization evidence remains. LaTeX line wrapping still combines `랄랄루` and `랄랄라.` into `랄랄루 랄랄라.`; an older saved `랄랄루` can match the beginning of that extended context. Removing a commented `헬로` between a unique heading and this following text therefore keeps an estimated marker. Estimates never become new shared or local reference snapshots automatically.
-
-Version 0.10.1 shows missing-line estimates as **Uncertain · Estimated passage** rows above the following source line using [VS Code CodeLens](https://code.visualstudio.com/api/language-extensions/programmatic-language-features#codelens---show-actionable-context-information-within-source-code). These rows preview the saved passage, have no source line number, and do not modify the file, line count, dirty state, Git history, or LaTeX output. Existing blank or replacement lines still use ordinary candidate markers. Keep VS Code's `editor.codeLens` enabled to see virtual rows; the inline review remains available if it is disabled. At the physical end of a file without a following line, the CodeLens sits above the last line and explicitly says **After final line**; the comment widget sits below that line.
-
-If saved and local references disagree, both markers open the same review tab and share one comment, draft, and history. The review lists both candidates with **Open saved candidate** and **Open local candidate** navigation. Exploring them never confirms either location or renews an anchor. Use **Move to editor selection** to confirm the intended passage and record the move; resolving hides both markers and reopening restores them. The candidates and virtual rows are derived from the current document, so existing review data needs no migration.
+Saved local ranges survive restarting VS Code. File reloads and changes made while closed use an exact edit diff from a known snapshot, without fuzzy sentence matching. Clipboard pairing is limited to recent matching deletions in the same document; cross-file relocation uses the manual move command. See [Anchor tracking design and implementation](docs/anchor-tracking.md) for range rules, snapshot storage, pending states, compatibility, and limits.
 
 ## Move a comment manually
 
@@ -168,13 +127,13 @@ If saved and local references disagree, both markers open the same review tab an
 2. Open the thread in **GiTex Comments**, then click **Move to editor selection** in the review panel. You can also select **GiTex: Move Comment to Selection** from the thread's Explorer context menu or inline thread toolbar.
 3. Alternatively, run **GiTex: Move Comment to Selection** from the Command Palette or the editor context menu and choose the thread to move.
 
-The entire thread, including its replies, moves to the chosen range. You can reattach **Uncertain** or **Outdated** threads or move between source files in the same repository. Its ID, comment text, edit history, and resolved state stay intact. Resolved threads remain hidden in the paper editor after moving. Save or cancel an inline comment edit before moving; review-panel drafts are retained.
+The entire thread, including its replies, moves to the chosen range. You can reattach **Uncertain** or **Pending document** threads or move between source files in the same repository. Its ID, comment text, edit history, and resolved state stay intact. Resolved threads remain hidden in the paper editor after moving. Save or cancel an inline comment edit before moving; review-panel drafts are retained.
 
 Every successful move is a separate immutable event, including repeated moves to the same destination. **Tracking history** labels it **Manual move** and shows the previous tracking reference and new file, line range, source text, author, and timestamp. The new location becomes the matching reference for subsequent automatic tracking. Location moves are comment edits for synchronization purposes: they trigger one background pull + push when `gitex.autoSyncOnSave` is enabled, and remain local when disabled.
 
 If the destination text or known comment location changes during selection, the move is rejected so you can select it again. Concurrent offline moves retain both before/after records and choose a current location deterministically. Automatic tracking snapshots from a previous manual location are kept in history without moving the comment back. **Current reference** identifies the active location, which can differ from the final history entry.
 
-All collaborators must use **GiTex 0.5.0 or later** before sharing manual moves. Existing comments and tracking history continue to work without migration.
+All collaborators must use **GiTex 0.12.0 or later** to share moves with document snapshots. Existing comment text and tracking history are preserved.
 
 ## Automatic sync after saving
 
@@ -238,9 +197,9 @@ Thread creation, replies, edits, manual moves, and state changes are immutable e
 
 Concurrent resolve and reopen events are ordered by logical clock and event ID to produce a consistent final state. Both events remain in the history. Author information comes from Git configuration; GiTex does not provide separate user authentication or signature verification.
 
-Each comment records the base commit, local document hash, file path, line range, original passage, surrounding context, and an end boundary when applicable. The base commit is HEAD at creation time. When there are uncommitted edits, the passage may differ from the file in that commit. Matching uses the latest shared reference and a separate local reference in VS Code workspace storage. If the passage cannot be attached reliably, GiTex retains the saved excerpt and may show a context-only estimate; the original remains available in Tracking history.
+Each reference records the base commit, document hash, file path, source lines, logical columns, and selected text. Editor tracking also stores surviving fragment offsets and a whole-document snapshot at `documents/<documentHash>.txt`. Snapshots are shared across references with identical content. The archive marker is version 2 when snapshots are present; review events retain version 1. Old archives remain readable.
 
-Review history includes excerpts and author email addresses. Backing up only the paper branches does not include unpublished local comments: use Sync Comments to share them or back up the entire Git repository. Do not merge `gitex-comments` into a paper branch or use it as an editing branch.
+Review history includes annotated document snapshots and author email addresses. A comment on unsaved source text shares that document version when comments synchronize. Backing up only paper branches does not include unpublished local reviews: sync them or back up the entire Git repository. Do not merge `gitex-comments` into a paper branch or use it as an editing branch.
 
 ## Development and verification
 
@@ -251,7 +210,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.11.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.12.0.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |
@@ -274,7 +233,7 @@ make test-extension
 
 `make test-extension` uses the official test tools to download VS Code 1.90.2 and run the extension with a temporary repository and profile. On Linux CI, provide an X server or use `xvfb-run -a make test-extension`. Use `GITEX_VSCODE_VERSION=stable make test-extension` to run against the current stable release. `make package` downloads the official `vsce` tool and produces a VSIX; it does not publish to the Marketplace.
 
-Core tests cover concurrent pushes and edits, complete edit history, outdated drafts, pull without publishing, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, edited, rewrapped, deleted, or repeated passages, plus concurrent tracking-reference updates and manual moves with complete before/after history. Extension host tests also use Playwright against the test instance's local debugging port to verify actual review-panel clicks, expansion, editing, resolved visibility, replacement of the shared review tab, draft preservation, tracking-reference renewal, manual cross-file relocation, save-only automatic pull/push, disabled settings, and unsaved-file protection during repository import. Repository tests cover path conflicts, concurrent file creation, rollback, and preserving unrelated files.
+Core tests cover concurrent pushes and edits, complete edit history, outdated drafts, pull without publishing, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, edited, rewrapped, deleted, or repeated passages, plus concurrent tracking-reference updates and manual moves with complete before/after history. Extension host tests also use Playwright against the test instance's local debugging port to verify actual review-panel clicks, expansion, editing, resolved visibility, replacement of the shared review tab, draft preservation, editor-operation range tracking, exact gutter selections, cut/paste, undo/redo, split identities, pending documents and recovery after a paper pull, manual cross-file relocation, save-only automatic pull/push, disabled settings, and unsaved-file protection during repository import. Repository tests cover path conflicts, concurrent file creation, rollback, and preserving unrelated files.
 
 Discovery tests cover deep and nested repositories, overlapping workspace folders, worktree/submodule `.git` files, and skipped metadata, bare storage, temporary imports, and symlink cycles. Extension tests verify automatic switching from the active editor, repository-specific sync, retained drafts, and detection after repository creation/removal.
 
@@ -282,7 +241,7 @@ Discovery tests cover deep and nested repositories, overlapping workspace folder
 
 - Reviews sync automatically after saving by default, or through manual commands. Live collaborative typing and automatic server notifications are not implemented.
 - Comments appear on LaTeX source. PDF annotations, semantic sentence analysis, and LaTeX compilation checks are not implemented.
-- Renamed files are not migrated automatically; use Move Comment to Selection to reattach their threads. Edits with insufficient similarity or ambiguous matches require manual review.
+- Renamed files are not migrated automatically; use Move Comment to Selection to reattach their threads. Cross-file cut/paste and edits without a recoverable document version require manual reconnection.
 - Comment deletion and fine-grained permissions are not implemented. Users with repository write access can share edits, replies, and thread state changes. Original authorship and the editor of each revision are recorded separately.
 - Multiple workspace folders, recursively discovered nested repositories, worktrees, and submodules are supported. The selected file chooses the repository; bare storage has no editable working tree.
 - This prototype combines events in memory and caps the combined output of each Git command at 32 MiB. Large-history optimization is future work.

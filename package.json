@@ -1,8 +1,8 @@
 {
   "name": "gitex",
   "displayName": "GiTex",
-  "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.11.0",
+  "description": "Git-backed passage comments and collaboration for LaTeX papers.",
+  "version": "0.12.0",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -105,7 +105,7 @@
       },
       {
         "command": "gitex.addComment",
-        "title": "GiTex: Add Line Comment"
+        "title": "GiTex: Add Comment"
       },
       {
         "command": "gitex.sync",

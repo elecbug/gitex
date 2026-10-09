@@ -18,6 +18,8 @@ export interface Anchor {
   afterBoundary?: 'document-end' | 'file-end';
   // selected contains only the owned text, even when the UI covers whole lines.
   logicalRange?: LogicalRange;
+  /** Exact editor-operation tracking; fragment offsets address the LF-normalized snapshot. */
+  tracking?: { version: 1; fragments: { start: number; end: number }[] };
 }
 
 export interface Estimate {
@@ -31,6 +33,7 @@ export interface Estimate {
 export interface EstimateCandidate extends Estimate { reference: 'saved' | 'local' }
 export type Location = ({ kind: 'attached'; startLine: number; endLine: number; similarity?: number; logicalRange?: LogicalRange } |
   ({ kind: 'uncertain'; candidates?: EstimateCandidate[] } & Estimate) |
+  { kind: 'pending'; reason: string } |
   { kind: 'outdated'; reason: string }) & { source?: 'local' };
 
 export function locationEstimates(location: Location): EstimateCandidate[] {
@@ -51,21 +54,39 @@ function selectedLines(document: string[], start: number, end: number, range?: L
   return selected;
 }
 
-function matches(document: string[], selected: string[], range?: LogicalRange): number[] {
-  const result: number[] = [];
+type TextMatch = { start: number; end: number; logicalRange?: LogicalRange };
+function matches(document: string[], selected: string[], range?: LogicalRange): TextMatch[] {
+  const result: TextMatch[] = [];
   for (let i = 0; i + selected.length <= document.length; i++) {
-    if (selected.every((line, offset) => {
-      let current = document[i + offset];
-      if (range && offset === selected.length - 1) { current = current.slice(0, range.endCharacter); }
-      if (range && offset === 0) { current = current.slice(range.startCharacter); }
-      return current === line;
-    })) {
-      const tail = range ? document[i + selected.length - 1].slice(range.endCharacter) : '';
-      if (range && normalize(selected.join(' ')).length < 16 && /[\p{L}\p{N}]$/u.test(selected.at(-1)!) && /^[\p{L}\p{N}]/u.test(tail)) { continue; }
-      result.push(i);
+    const end = i + selected.length - 1;
+    if (!range) {
+      if (selected.every((line, offset) => document[i + offset] === line)) { result.push({ start: i, end }); }
+      continue;
+    }
+    // Columns describe the saved snapshot, not where the passage must be today.
+    // Enumerate every occurrence, including separate passages on the same line.
+    for (let column = document[i].indexOf(selected[0]); column !== -1; column = document[i].indexOf(selected[0], column + 1)) {
+      if (selected.length > 1 && (document[i].slice(column) !== selected[0] ||
+          !selected.slice(1, -1).every((line, offset) => document[i + offset + 1] === line) ||
+          !document[end].startsWith(selected.at(-1)!))) { continue; }
+      const endCharacter = selected.at(-1)!.length + (i === end ? column : 0);
+      result.push({ start: i, end, ...(column || endCharacter !== document[end].length ?
+        { logicalRange: { startCharacter: column, endCharacter } } : {}) });
+      if (column === document[i].length) { break; } // An empty first fragment can match the line ending.
     }
   }
   return result;
+}
+
+export interface TextPosition { line: number; character: number }
+/** Editor selections have exclusive ends; an empty selection means the current line. */
+export function createSelectionAnchor(path: string, text: string, selection: { start: TextPosition; end: TextPosition }, baseCommit: string | null): Anchor {
+  let { start, end } = selection;
+  if (start.line > end.line || start.line === end.line && start.character > end.character) { [start, end] = [end, start]; }
+  if (start.line === end.line && start.character === end.character) { return createAnchor(path, text, start.line, start.line, baseCommit); }
+  const document = lines(text);
+  if (end.line > start.line && end.character === 0) { end = { line: end.line - 1, character: document[end.line - 1]?.length }; }
+  return createAnchor(path, text, start.line, end.line, baseCommit, { startCharacter: start.character, endCharacter: end.character });
 }
 
 export function createAnchor(path: string, text: string, startLine: number, endLine: number, baseCommit: string | null, logicalRange?: LogicalRange): Anchor {
@@ -77,7 +98,7 @@ export function createAnchor(path: string, text: string, startLine: number, endL
       startLine === endLine && logicalRange.endCharacter <= logicalRange.startCharacter)) { throw new Error('Invalid logical anchor range.'); }
   if (logicalRange?.startCharacter === 0 && logicalRange.endCharacter === document[endLine].length) { logicalRange = undefined; }
   const selected = selectedLines(document, startLine, endLine, logicalRange);
-  if (!selected.some(line => line.trim())) { throw new Error('Select at least one non-empty line.'); }
+  if (!selected.some(line => line.trim())) { throw new Error('Select non-empty text, or place the cursor on a non-empty line.'); }
   const boundary = endBoundary(document);
   const afterBoundary = (!logicalRange || emptyTail(document[endLine].slice(logicalRange.endCharacter))) &&
     endLine <= boundary.line && document.slice(endLine + 1, boundary.line).every(emptyTail) &&
@@ -89,6 +110,7 @@ export function createAnchor(path: string, text: string, startLine: number, endL
     ...(logicalRange ? { logicalRange } : {}) };
 }
 
+/** Legacy text matcher retained for historical compatibility tests; the extension uses EditTracking. */
 export function locateAnchor(anchor: Anchor, text: string): Location {
   const location = locateText(anchor, text);
   return location.kind === 'attached' ? location : contextOnly(anchor, lines(text)) ?? location;
@@ -101,7 +123,8 @@ function locateText(anchor: Anchor, text: string): Location {
   const boundary = endBoundary(full);
   const document = (anchor.afterBoundary === 'document-end' || endBoundary(anchor.after).kind === 'document-end') && boundary.kind === 'document-end'
     ? full.slice(0, boundary.line + 1) : full;
-  const candidates = matches(document, anchor.selected, anchor.logicalRange).map(start => {
+  const candidates = matches(document, anchor.selected, anchor.logicalRange).map(match => {
+    const { start, end, logicalRange } = match;
     let score = 0;
     for (let i = 1; i <= anchor.before.length; i++) {
       if (document[start - i] !== anchor.before[anchor.before.length - i]) { break; }
@@ -111,8 +134,8 @@ function locateText(anchor: Anchor, text: string): Location {
       if (document[start + anchor.selected.length + i] !== anchor.after[i]) { break; }
       score++;
     }
-    score += sentenceEvidence(anchor, document, start, start + anchor.selected.length - 1, anchor.logicalRange) * 3;
-    return { start, score };
+    score += sentenceEvidence(anchor, document, start, end, logicalRange) * 3;
+    return { ...match, score };
   }).sort((a, b) => b.score - a.score);
   if (!candidates.length) { return approximate(anchor, document); }
   const best = candidates[0];
@@ -127,8 +150,8 @@ function locateText(anchor: Anchor, text: string): Location {
       (anchor.occurrences > 1 && best.score === 0)) {
     return { kind: 'outdated', reason: 'Several passages could match this comment. Review the original excerpt.' };
   }
-  return { kind: 'attached', startLine: best.start, endLine: best.start + anchor.selected.length - 1,
-    ...(anchor.logicalRange ? { logicalRange: anchor.logicalRange } : {}) };
+  return { kind: 'attached', startLine: best.start, endLine: best.end,
+    ...(best.logicalRange ? { logicalRange: best.logicalRange } : {}) };
 }
 
 function normalize(text: string): string { return text.replace(/\s+/gu, ' ').trim(); }
@@ -156,14 +179,14 @@ function roughSimilarity(a: string, b: string, allowAppend = false): number {
 
 // Align the entire reference, optionally allowing an uncharged suffix on a longer
 // candidate. Leading/internal edits still cost distance; this is not substring search.
-function similarity(a: string, b: string, budget: { remaining: number }, allowAppend = false): { score: number; length: number } {
+function similarity(a: string, b: string, budget: { remaining: number }, allowAppend = false, allowPartialWord = false): { score: number; length: number } {
   const missing = { score: 0, length: b.length };
   if (a === b) { return { score: 1, length: b.length }; }
   const append = allowAppend && b.length > a.length;
   const endpoint = (length: number) => {
     // VS Code columns are UTF-16, but an owned passage must not end inside a code point.
     if (/[\uD800-\uDBFF]/.test(b[length - 1] ?? '') && /[\uDC00-\uDFFF]/.test(b[length] ?? '')) { return false; }
-    return !append || a.length >= 16 || length === b.length ||
+    return !append || allowPartialWord || a.length >= 16 || length === b.length ||
       !/[\p{L}\p{N}]/u.test(b[length - 1]) || !/[\p{L}\p{N}]/u.test(b[length]);
   };
   if (append && b.startsWith(a) && endpoint(a.length)) { return { score: 1, length: a.length }; }
@@ -195,7 +218,7 @@ function similarity(a: string, b: string, budget: { remaining: number }, allowAp
   return best;
 }
 
-/** A display match is not sufficient evidence to replace a tracking reference. */
+/** Legacy renewal policy; active references now advance through editor operations. */
 export function renewAnchor(reference: Anchor, identity: Anchor, text: string, location: Location,
   baseCommit = reference.baseCommit): Anchor | undefined {
   if (location.kind !== 'attached' || reference.path !== identity.path) { return undefined; }
@@ -271,6 +294,12 @@ function approximate(anchor: Anchor, document: string[]): Location {
   for (let start = 0; start < normalized.length; start++) {
     if (!normalized[start]) { continue; }
     const columns = new Set([0, anchor.logicalRange?.startCharacter ?? 0]);
+    if (anchor.logicalRange) {
+      for (const token of document[start].matchAll(/\S+/gu)) { columns.add(token.index!); }
+      // A user may intentionally select inside a word or a LaTeX command.
+      const prefix = selected.slice(0, Math.min(8, selected.length));
+      for (let at = document[start].indexOf(prefix); at !== -1; at = document[start].indexOf(prefix, at + 1)) { columns.add(at); }
+    }
     for (const column of columns) {
       let text = '';
       for (let end = start; end < Math.min(normalized.length, start + maximumLines); end++) {
@@ -292,7 +321,7 @@ function approximate(anchor: Anchor, document: string[]): Location {
   candidates.sort((a, b) => b.rank - a.rank);
   const budget = { remaining: 8_000_000 };
   candidates = candidates.slice(0, 64).filter(candidate => {
-    const match = similarity(selected, candidate.text, budget, true);
+    const match = similarity(selected, candidate.text, budget, true, !!anchor.logicalRange);
     candidate.similarity = match.score;
     Object.assign(candidate, sourceRange(candidate.start, candidate.end, candidate.column, match.length));
     candidate.context = context(candidate.start, candidate.end, candidate.logicalRange);
@@ -303,9 +332,16 @@ function approximate(anchor: Anchor, document: string[]): Location {
   }).sort((a, b) => b.rank - a.rank);
   if (budget.remaining < 0 || !candidates.length) { return missing; }
   const best = candidates[0];
+  const offsets: number[] = [];
+  let offset = 0;
+  for (const line of document) { offsets.push(offset); offset += line.length + 1; }
+  const bounds = (candidate: Candidate) => ({ start: offsets[candidate.start] + (candidate.logicalRange?.startCharacter ?? 0),
+    end: offsets[candidate.end] + (candidate.logicalRange?.endCharacter ?? document[candidate.end].length) });
+  const bestBounds = bounds(best);
   const alternative = candidates.find(candidate => {
-    const overlap = Math.max(0, Math.min(best.end, candidate.end) - Math.max(best.start, candidate.start) + 1);
-    return overlap / Math.max(best.end - best.start + 1, candidate.end - candidate.start + 1) < 0.5;
+    const other = bounds(candidate);
+    const overlap = Math.max(0, Math.min(bestBounds.end, other.end) - Math.max(bestBounds.start, other.start));
+    return overlap / Math.max(1, bestBounds.end - bestBounds.start, other.end - other.start) < 0.5;
   });
   if ((alternative && best.rank - alternative.rank < 0.06) || (anchor.occurrences > 1 && best.context < 0.35)) {
     return { kind: 'outdated', reason: 'Several similar passages could match this comment. Review the saved excerpt.' };

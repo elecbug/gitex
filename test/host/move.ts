@@ -22,7 +22,7 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   const original = (await store.threads())[0];
   const current = async () => (await store.threads()).find(thread => thread.id === original.id)!;
   const item = () => app.getChildren().find((item: any) => item.review.id === original.id);
-  assert.equal(item().location.kind, 'outdated');
+  assert.equal(item().location.kind, 'uncertain');
   assert.ok((await vscode.commands.getCommands()).includes('gitex.moveComment'));
   const target = path.join(store.root, 'moved.tex');
   const content = 'Heading\nMoved target line one.\nMoved target line two.\nAnother destination.\n';
@@ -118,7 +118,7 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   const previousWidget = app.nativeThreads.get(item().key);
   const main = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(store.root, 'main.tex')));
   editor = await vscode.window.showTextDocument(main, vscode.ViewColumn.One);
-  editor.selection = new vscode.Selection(3, 0, 3, 0);
+  editor.selection = new vscode.Selection(2, 0, 2, 0);
   await vscode.commands.executeCommand('gitex.moveComment', item());
   await Promise.all([...app.syncs.values()]);
   const returnedWidget = app.nativeThreads.get(item().key);

@@ -29,7 +29,7 @@ export async function blankLineTests(app: any, store: ReviewStore): Promise<void
   try {
     assert.deepEqual(ranges().map(range => [range.start.line, range.end.line]), [[2, 3], [6, 6]]);
     for (const selection of [new vscode.Selection(0, 0, 0, 0), new vscode.Selection(1, 1, 1, 1),
-      new vscode.Selection(0, 0, 2, 0), new vscode.Selection(2, 0, 0, 0), new vscode.Selection(7, 0, 7, 0)]) {
+      new vscode.Selection(2, 5, 2, 6), new vscode.Selection(0, 0, 2, 0), new vscode.Selection(2, 0, 0, 0), new vscode.Selection(7, 0, 7, 0)]) {
       editor.selection = selection;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {

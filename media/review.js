@@ -98,6 +98,9 @@
     const passage = element('details', undefined, contextCard, 'passage'); passage.open = true;
     const passageSummary = element('summary', 'Saved reference', passage);
     const excerpt = element('pre', '', element('div', undefined, passage, 'passage-content'));
+    const original = element('details', undefined, contextCard, 'passage');
+    element('summary', 'Original selection', original);
+    const originalExcerpt = element('pre', '', original); originalExcerpt.id = 'original-selection';
     const surroundings = element('details', undefined, passage, 'surroundings');
     const surroundingsLabel = element('summary', 'Surrounding sentences', surroundings);
     const surroundingsBody = element('div', undefined, surroundings);
@@ -108,7 +111,7 @@
     const tools = element('div', undefined, contextCard, 'thread-tools');
     const source = button('Open source', tools, 'secondary', 'source'); source.id = 'source';
     const move = button('Move to editor selection', tools, 'quiet', 'move');
-    move.title = 'Select destination lines in a LaTeX editor first. The whole thread moves and its history is preserved.';
+    move.title = 'Select destination text in a LaTeX editor first. The whole thread moves and its history is preserved.';
     const label = element('label', undefined, tools, 'resolved-toggle');
     const resolved = element('input', undefined, label);
     resolved.type = 'checkbox'; resolved.id = 'resolved';
@@ -135,7 +138,7 @@
     icon('history', trackingSummary);
     const trackingLabel = element('span', 'Tracking history', trackingSummary);
     const trackingEntries = element('div', undefined, tracking, 'revision-list');
-    const view = { key, root, repository, location, match, lines, contextNote, candidates, excerpt, passage, passageSummary, source,
+    const view = { key, root, repository, location, match, lines, contextNote, candidates, excerpt, passage, passageSummary, source, originalExcerpt,
       surroundings, surroundingsLabel, surroundingsBody, localContext, localSummary, localBody,
       count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), error: '',
       trackingLabel, trackingEntries, trackingSignature: '', scroll: 0 };
@@ -222,16 +225,17 @@
     view.location.textContent = review.anchor.path;
     const attached = context.location.kind === 'attached';
     const uncertain = context.location.kind === 'uncertain';
+    const pending = context.location.kind === 'pending';
     view.root.dataset.location = context.location.kind;
     view.lines.textContent = uncertain ? context.location.candidates ? '2 candidate locations' : 'Estimated location · ' + estimatePosition(context.location) :
       (attached ? '' : 'Saved reference · ') + range(attached ? context.location : review.anchor);
-    view.match.textContent = uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
+    view.match.textContent = pending ? 'Pending document' : uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
       'Similar text · ' + Math.round(context.location.similarity * 100) + '%';
     if (context.location.source === 'local') view.match.textContent += ' · Local context';
     if (uncertain && context.location.candidates) view.match.textContent += ' · 2 candidates';
     view.match.dataset.tone = uncertain ? 'uncertain' : !attached ? 'warning' : 'accent';
     view.contextNote.hidden = attached;
-    view.contextNote.textContent = attached ? '' : context.location.reason + ' Select source lines and use Move to editor selection to reattach.';
+    view.contextNote.textContent = attached ? '' : context.location.reason + (pending ? ' Use Git Pull in Source Control; Sync Comments only synchronizes reviews.' : ' Select text and use Move to editor selection to reconnect.');
     view.candidates.hidden = !uncertain || !context.location.candidates;
     view.candidates.replaceChildren();
     for (const candidate of uncertain ? context.location.candidates || [] : []) {
@@ -242,6 +246,7 @@
     }
     view.passageSummary.textContent = 'Saved reference · ' + range(review.anchor);
     view.excerpt.textContent = review.anchor.selected.join('\n');
+    view.originalExcerpt.textContent = review.identityAnchor.selected.join('\n');
     if (uncertain && view.lastLocation !== 'uncertain') view.passage.open = true;
     view.lastLocation = context.location.kind;
     view.surroundingsLabel.textContent = review.anchor.sentenceContext ? 'Surrounding sentences' : 'Saved line context (legacy)';

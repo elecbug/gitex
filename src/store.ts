@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Anchor } from './anchor';
+import { Anchor, documentHash } from './anchor';
 import { Git, GitError } from './git';
 import { Author, materialize, parseEvent, ReviewEvent, ReviewThread } from './model';
 
 export const LOCAL_REF = 'refs/gitex/comments';
 export const REMOTE_REF = 'refs/heads/gitex-comments';
-const marker = JSON.stringify({ format: 'gitex-comments', version: 1 });
+const legacyMarker = JSON.stringify({ format: 'gitex-comments', version: 1 });
+const marker = JSON.stringify({ format: 'gitex-comments', version: 2 });
 type Entry = { event: ReviewEvent; oid: string };
-type Entries = Map<string, Entry>;
+class Entries extends Map<string, Entry> { documents = new Map<string, string>(); }
 type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string; anchor?: Anchor; anchorBasedOn?: string } |
   { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor; anchorBasedOn?: string } |
   { type: 'move'; anchor: Anchor; basedOn: string } | { type: 'state'; resolved: boolean };
@@ -15,7 +16,6 @@ type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply
 export class ReviewStore {
   readonly git: Git;
   private pending: Promise<unknown> = Promise.resolve();
-  private markerOid?: string;
 
   constructor(readonly root: string) { this.git = new Git(root); }
 
@@ -38,23 +38,55 @@ export class ReviewStore {
 
   async head(): Promise<string | null> { return this.git.ref('HEAD'); }
 
-  create(anchor: Anchor, body: string): Promise<string> {
-    return this.append(undefined, { type: 'create', anchor, body: body.trim() });
+  /** Snapshots are shared once per document hash, separately from immutable events. */
+  async documentText(anchor: Anchor): Promise<string | undefined> {
+    const tip = await this.git.ref(LOCAL_REF);
+    const spec = anchor.tracking && tip ? `${tip}:documents/${anchor.documentHash}.txt` :
+      anchor.baseCommit ? `${anchor.baseCommit}:${anchor.path}` : undefined;
+    if (!spec) { return undefined; }
+    const result = await this.git.run(['show', spec]);
+    if (result.code !== 0) { return undefined; }
+    const text = result.stdout.toString('utf8').replace(/\r\n/g, '\n');
+    return documentHash(text) === anchor.documentHash ? text : undefined;
   }
-  reply(threadId: string, body: string, anchor?: Anchor, anchorBasedOn?: string): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim(), anchor, anchorBasedOn }); }
-  edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor, anchorBasedOn?: string): Promise<string> {
-    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor, anchorBasedOn });
+
+  /** A comment snapshot must have reached this paper's branch before replaying later edits. */
+  async documentAvailable(anchor: Anchor, text: string): Promise<boolean> {
+    if (!await this.head()) { return false; }
+    for (const content of new Set([text, text.replace(/\n/g, '\r\n')])) {
+      const oid = await this.git.text(['hash-object', '--stdin'], content);
+      const history = await this.git.run(['log', '--format=%H', '--max-count=1', `--find-object=${oid}`, 'HEAD', '--', anchor.path]);
+      if (history.code === 0 && history.stdout.toString('utf8').trim()) { return true; }
+    }
+    return false;
   }
-  move(threadId: string, anchor: Anchor, basedOn: string): Promise<string> { return this.append(threadId, { type: 'move', anchor, basedOn }); }
+
+  create(anchor: Anchor, body: string, document?: string): Promise<string> {
+    return this.append(undefined, { type: 'create', anchor, body: body.trim() }, document);
+  }
+  reply(threadId: string, body: string, anchor?: Anchor, anchorBasedOn?: string, document?: string): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim(), anchor, anchorBasedOn }, document); }
+  edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor, anchorBasedOn?: string, document?: string): Promise<string> {
+    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor, anchorBasedOn }, document);
+  }
+  move(threadId: string, anchor: Anchor, basedOn: string, document?: string): Promise<string> { return this.append(threadId, { type: 'move', anchor, basedOn }, document); }
   setResolved(threadId: string, resolved: boolean): Promise<string> { return this.append(threadId, { type: 'state', resolved }); }
 
-  private append(threadId: string | undefined, payload: Payload): Promise<string> {
+  private append(threadId: string | undefined, payload: Payload, document?: string): Promise<string> {
     return this.exclusive(async () => {
       const id = randomUUID();
       const author = await this.author();
       for (let attempt = 0; attempt < 8; attempt++) {
         const old = await this.git.ref(LOCAL_REF);
         const entries = await this.read(old);
+        if ('anchor' in payload && payload.anchor?.tracking) {
+          if (document !== undefined) {
+            document = document.replace(/\r\n/g, '\n');
+            if (documentHash(document) !== payload.anchor.documentHash) { throw new Error('The comment document snapshot does not match its reference.'); }
+            const oid = await this.git.text(['hash-object', '-w', '--stdin'], document);
+            entries.documents.set(payload.anchor.documentHash, oid);
+          }
+          if (!entries.documents.has(payload.anchor.documentHash)) { throw new Error('The comment document snapshot is missing.'); }
+        }
         if (threadId && !entries.has(threadId)) { throw new Error('The comment thread no longer exists locally. Refresh or sync comments.'); }
         const thread = threadId ? materialize([...entries.values()].map(entry => entry.event)).find(thread => thread.id === threadId) : undefined;
         if (payload.type === 'move' && payload.basedOn !== thread!.anchorRevision) {
@@ -126,7 +158,12 @@ export class ReviewStore {
     for (let attempt = 0; attempt < 8; attempt++) {
       const localTip = await this.git.ref(LOCAL_REF);
       const localEntries = await this.read(localTip);
-      const union = new Map(localEntries);
+      const union = new Entries(localEntries);
+      union.documents = new Map(localEntries.documents);
+      for (const [hash, oid] of remoteEntries.documents) {
+        if (union.documents.has(hash) && union.documents.get(hash) !== oid) { throw new Error('Conflicting GiTex document snapshots.'); }
+        union.documents.set(hash, oid);
+      }
       for (const [id, entry] of remoteEntries) {
         if (union.has(id) && union.get(id)!.oid !== entry.oid) { throw new Error('Conflicting immutable comment IDs. Sync stopped without overwriting data.'); }
         union.set(id, entry);
@@ -153,7 +190,7 @@ export class ReviewStore {
   }
 
   private async read(tip: string | null): Promise<Entries> {
-    if (!tip) { return new Map(); }
+    if (!tip) { return new Entries(); }
     const listing = await this.git.text(['ls-tree', '-r', '-z', tip]);
     const records = listing.split('\0').filter(Boolean).map(record => {
       const match = /^100644 blob ([a-f0-9]+)\t(.+)$/.exec(record);
@@ -161,14 +198,16 @@ export class ReviewStore {
       return { oid: match[1], path: match[2] };
     });
     if (!records.some(record => record.path === '_gitex.json') || records.some(record =>
-      record.path !== '_gitex.json' && !/^events\/[a-f0-9-]{36}\.json$/.test(record.path))) {
+      record.path !== '_gitex.json' && !/^events\/[a-f0-9-]{36}\.json$/.test(record.path) && !/^documents\/[a-f0-9]{64}\.txt$/.test(record.path))) {
       throw new Error('The gitex-comments branch is not a GiTex metadata branch. It has not been overwritten.');
     }
-    const batch = await this.git.run(['cat-file', '--batch'], records.map(record => record.oid).join('\n') + '\n');
+    const metadata = records.filter(record => !record.path.startsWith('documents/'));
+    const batch = await this.git.run(['cat-file', '--batch'], metadata.map(record => record.oid).join('\n') + '\n');
     if (batch.code !== 0) { throw new GitError(batch, 'cat-file'); }
-    const entries: Entries = new Map();
+    const entries = new Entries();
+    for (const record of records.filter(record => record.path.startsWith('documents/'))) { entries.documents.set(record.path.slice(10, -4), record.oid); }
     let cursor = 0;
-    for (const record of records) {
+    for (const record of metadata) {
       const end = batch.stdout.indexOf(10, cursor);
       const header = batch.stdout.subarray(cursor, end).toString('utf8');
       const match = /^([a-f0-9]+) blob (\d+)$/.exec(header);
@@ -177,10 +216,11 @@ export class ReviewStore {
       const content = batch.stdout.subarray(end + 1, end + 1 + length).toString('utf8');
       cursor = end + 2 + length;
       if (record.path === '_gitex.json') {
-        if (content !== marker) { throw new Error('Unsupported GiTex metadata format. Update GiTex before syncing.'); }
+        if (content !== marker && content !== legacyMarker) { throw new Error('Unsupported GiTex metadata format. Update GiTex before syncing.'); }
       } else {
         const event = parseEvent(content);
         if (record.path !== `events/${event.id}.json`) { throw new Error('Invalid GiTex event filename.'); }
+        if ('anchor' in event && event.anchor?.tracking && !entries.documents.has(event.anchor.documentHash)) { throw new Error('A GiTex document snapshot is missing.'); }
         entries.set(event.id, { event, oid: record.oid });
       }
     }
@@ -189,10 +229,13 @@ export class ReviewStore {
   }
 
   private async commit(entries: Entries, parents: string[]): Promise<string> {
-    this.markerOid ??= await this.git.text(['hash-object', '-w', '--stdin'], marker);
+    const markerOid = await this.git.text(['hash-object', '-w', '--stdin'], entries.documents.size ? marker : legacyMarker);
     const eventTree = await this.git.text(['mktree'], [...entries].sort(([a], [b]) => a.localeCompare(b, 'en'))
       .map(([id, entry]) => `100644 blob ${entry.oid}\t${id}.json\n`).join(''));
-    const tree = await this.git.text(['mktree'], `100644 blob ${this.markerOid}\t_gitex.json\n040000 tree ${eventTree}\tevents\n`);
+    const documents = entries.documents.size ? await this.git.text(['mktree'], [...entries.documents].sort(([a], [b]) => a.localeCompare(b, 'en'))
+      .map(([hash, oid]) => `100644 blob ${oid}\t${hash}.txt\n`).join('')) : undefined;
+    const tree = await this.git.text(['mktree'], `100644 blob ${markerOid}\t_gitex.json\n040000 tree ${eventTree}\tevents\n` +
+      (documents ? `040000 tree ${documents}\tdocuments\n` : ''));
     return this.git.text(['-c', 'commit.gpgsign=false', 'commit-tree', tree, ...parents.flatMap(parent => ['-p', parent])], 'GiTex review update\n');
   }
 

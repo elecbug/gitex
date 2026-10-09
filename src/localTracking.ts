@@ -5,7 +5,7 @@ export interface LocalReference { basedOn: string; anchor: Anchor; updatedAt: st
 export interface LocalTrackingState { version: 1; entries: [string, LocalReference][] }
 const revisionId = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
-/** Disposable local hints. Shared events are never modified by source editing. */
+/** Legacy similarity hints. The active extension uses EditTracking and does not trust these as edit history. */
 export class LocalTracking {
   private readonly live = new Map<string, LocalReference>();
   private readonly saved = new Map<string, LocalReference>();
@@ -47,7 +47,7 @@ export class LocalTracking {
            (localCandidate.estimatedRange?.endLine ?? localCandidate.estimatedLine) < (savedCandidate.estimatedRange?.startLine ?? savedCandidate.estimatedLine))) {
         location = { ...localCandidate, kind: 'uncertain', candidates: [savedCandidate, localCandidate],
           reason: 'Saved and local references suggest different locations. Both candidates are shown; review them and reconnect manually to confirm the passage.' };
-      } else if (shared.kind !== 'attached' && recent.kind !== 'outdated' &&
+      } else if (shared.kind !== 'attached' && recent.kind !== 'outdated' && recent.kind !== 'pending' &&
           (recent.kind === 'attached' || shared.kind === 'outdated' ||
            shared.kind === 'uncertain' && recent.kind === 'uncertain' && (recent.confidence > shared.confidence ||
              recent.confidence === shared.confidence && recent.estimatedLine !== shared.estimatedLine))) {
@@ -67,7 +67,7 @@ export class LocalTracking {
   }
 
   private candidate(location: Location, reference: 'saved' | 'local'): EstimateCandidate | undefined {
-    if (location.kind === 'outdated') { return undefined; }
+    if (location.kind === 'outdated' || location.kind === 'pending') { return undefined; }
     return location.kind === 'uncertain' ? { ...location, reference } : {
       reference, estimatedLine: location.startLine, estimatedRange: { startLine: location.startLine, endLine: location.endLine },
       confidence: location.similarity ?? 1, reason: 'This reference matches text here, but the other reference points to another location.'

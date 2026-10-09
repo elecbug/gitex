@@ -8,11 +8,8 @@ import { reviewTests } from './review';
 import { moveTests } from './move';
 import { repositoryTests } from './repositories';
 import { inlineSyncTests } from './inlineSync';
-import { uncertainTests } from './uncertain';
-import { localTrackingTests } from './localTracking';
-import { candidateTests } from './candidates';
 import { blankLineTests } from './blankLines';
-import { anchorProtectionTests } from './anchorProtection';
+import { editTrackingTests } from './editTracking';
 
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('gitex-local.gitex');
@@ -72,13 +69,13 @@ export async function run(): Promise<void> {
   assert.equal((await store.threads())[0].resolved, false);
   assert.equal(automaticSyncs, 2, 'resolve/reopen do not trigger save-only auto sync');
 
-  const gutterThread = app.controller.createCommentThread(document.uri, new vscode.Range(0, 0, 1, 0), []);
+  const gutterThread = app.controller.createCommentThread(document.uri, new vscode.Range(0, 0, 1, document.lineAt(1).text.length), []);
   await vscode.commands.executeCommand('gitex.reply', { thread: gutterThread, text: 'New thread from the editor gutter' });
   await settle(); assert.equal(automaticSyncs, 3);
   repository.store.sync = realSync;
   threads = await store.threads();
   assert.equal(threads.length, 2);
-  assert.equal(threads[1].anchor.endLine, 1, 'Comment API ranges include the last line even at column zero');
+  assert.equal(threads[1].anchor.endLine, 1, 'a native multi-line drag keeps the selected final line');
   assert.equal(gutterThread.comments.length, 1);
 
   await reviewTests(app, store, native);
@@ -98,28 +95,26 @@ export async function run(): Promise<void> {
   await config.update('autoSyncOnSave', false, vscode.ConfigurationTarget.WorkspaceFolder);
   await updatePaper('A reviewed result!');
   assert.equal(app.getChildren()[0].location.kind, 'attached');
-  assert.ok(app.getChildren()[0].location.similarity < 1);
+  assert.equal(app.getChildren()[0].location.similarity, undefined, 'attachment follows the edit operation');
   const comment = native.comments[0] as any;
   await vscode.commands.executeCommand('gitex.editComment', comment);
   comment.body = 'Reviewed the slightly updated passage';
   await vscode.commands.executeCommand('gitex.saveComment', comment);
   let tracked = (await store.threads())[0];
-  assert.deepEqual(tracked.anchor.selected, ['A reviewed result.'], 'weak structural context cannot authorize a reference rewrite');
-  assert.equal(tracked.anchor.startLine, 2);
+  assert.deepEqual(tracked.anchor.selected, ['A reviewed result!'], 'a replacement operation proves range continuity');
+  assert.equal(tracked.anchor.startLine, 3);
   assert.deepEqual(tracked.anchorHistory[0].anchor.selected, ['A reviewed result.']);
-  assert.ok(app.getChildren()[0].location.similarity < 1, 'saving a comment does not promote a weak attachment');
+  assert.deepEqual(tracked.identityAnchor.selected, ['A reviewed result.']);
   await updatePaper('A reviewed result!!');
   await vscode.commands.executeCommand('gitex.reply', { thread: native, text: 'Reviewing the next wording' });
   tracked = (await store.threads())[0];
-  assert.deepEqual(tracked.anchor.selected, ['A reviewed result.']);
+  assert.deepEqual(tracked.anchor.selected, ['A reviewed result!!']);
   const referenceBefore = tracked.anchor;
-  await updatePaper('A completely unrelated observation about hardware.');
+  await updatePaper('');
   await vscode.commands.executeCommand('gitex.refresh');
-  assert.equal(app.getChildren()[0].location.kind, 'outdated');
-  await vscode.commands.executeCommand('gitex.openThread', app.getChildren()[0]);
-  assert.equal(vscode.window.activeTextEditor!.document.uri.scheme, 'gitex-original');
-  assert.match(vscode.window.activeTextEditor!.document.getText(), /A reviewed result\./);
-  await app.panelAction(app.getChildren()[0], { type: 'reply', body: 'Outdated review still accepts replies', requestId: 'test' });
+  assert.equal(app.getChildren()[0].location.kind, 'uncertain');
+
+  await app.panelAction(app.getChildren()[0], { type: 'reply', body: 'Removed text still accepts replies', requestId: 'test' });
   assert.deepEqual((await store.threads())[0].anchor, referenceBefore, 'ambiguous or missing text must not reset the reference');
 
   await vscode.commands.executeCommand('gitex.sync');
@@ -129,11 +124,8 @@ export async function run(): Promise<void> {
   assert.equal(document.isDirty, true, 'sync must preserve unsaved editor changes');
   await moveTests(app, store);
   await inlineSyncTests(app, store);
-  await anchorProtectionTests(app, store);
-  await uncertainTests(app, store);
-  await localTrackingTests(app, store);
   await blankLineTests(app, store);
-  await candidateTests(app, store);
+  await editTrackingTests(app, store);
   await repositoryTests(app, store);
   console.log('GiTex extension host: applying repositories, unsaved-file protection, save-only sync, editing, history, drafts, and anchoring passed.');
 }

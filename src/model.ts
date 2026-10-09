@@ -54,6 +54,9 @@ export function validAnchor(value: unknown): value is Anchor {
         !Number.isSafeInteger(range.endCharacter) || range.endCharacter < 0 ||
         range.endCharacter !== a.selected.at(-1)!.length + (a.selected.length === 1 ? range.startCharacter : 0)) { return false; }
   }
+  if (a.tracking !== undefined && (!a.tracking || a.tracking.version !== 1 || !Array.isArray(a.tracking.fragments) ||
+      !a.tracking.fragments.length || a.tracking.fragments.length > 1024 || a.tracking.fragments.some(fragment =>
+        !fragment || !Number.isSafeInteger(fragment.start) || !Number.isSafeInteger(fragment.end) || fragment.start < 0 || fragment.end <= fragment.start))) { return false; }
   return a.sentenceContext === undefined || (!!a.sentenceContext && !Array.isArray(a.sentenceContext) &&
     typeof a.sentenceContext === 'object' && (['before', 'after'] as const).every(side =>
       typeof a.sentenceContext![side] === 'string' && a.sentenceContext![side].length <= MAX_CONTEXT_LENGTH &&

@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { createAnchor, locateAnchor, renewAnchor } from '../src/anchor';
 import { Git } from '../src/git';
+import { enableEditTracking } from '../src/editTracking';
 import { materialize, parseEvent, validPath } from '../src/model';
 import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../src/store';
 
@@ -446,4 +447,48 @@ test('malformed or cross-thread move references are rejected during materializat
   assert.throws(() => materialize([parseEvent(JSON.stringify(event)), parseEvent(JSON.stringify({ ...event, id: other, threadId: other })), parsed]), /invalid tracking revision/);
   assert.throws(() => parseEvent(JSON.stringify({ ...move, basedOn: undefined })), /Invalid GiTex/);
   assert.throws(() => parseEvent(JSON.stringify({ ...move, anchor: undefined })), /Invalid GiTex/);
+});
+
+
+test('document snapshots deduplicate, synchronize independently, and wait for the paper history', async t => {
+  const { a, b } = await fixture(t);
+  const future = paper.replace('A shared result.', 'A newer result which Bob has not received.');
+  await writeFile(path.join(a.root, 'main.tex'), future);
+  const anchor = enableEditTracking(createAnchor('main.tex', future, 2, 2, await a.head()), future);
+  const first = await a.create(anchor, 'Review the unpublished document', future);
+  await a.create(anchor, 'A second review on the same snapshot', future);
+  await a.sync(); await b.pull();
+  assert.equal(await b.documentText(anchor), future);
+  assert.equal(await b.documentAvailable(anchor, future), false);
+  assert.equal(await readFile(path.join(b.root, 'main.tex'), 'utf8'), paper);
+  const files = (await b.git.text(['ls-tree', '-r', '--name-only', LOCAL_REF])).split('\n');
+  assert.equal(files.filter(file => file.startsWith('documents/')).length, 1);
+  assert.equal(JSON.parse(await b.git.text(['show', `${LOCAL_REF}:_gitex.json`])).version, 2);
+  await a.git.text(['add', 'main.tex']);
+  await a.git.text(['-c', 'commit.gpgsign=false', 'commit', '-m', 'Publish the reviewed document']);
+  await a.git.text(['push', 'origin', 'main']);
+  await b.git.text(['pull', '--ff-only', 'origin', 'main']);
+  assert.equal(await b.documentAvailable(anchor, future), true);
+  const later = 'Preface.\n' + future;
+  await writeFile(path.join(b.root, 'main.tex'), later);
+  await b.git.text(['add', 'main.tex']); await b.git.text(['-c', 'commit.gpgsign=false', 'commit', '-m', 'Later paper edit']);
+  assert.equal(await b.documentAvailable(anchor, future), true, 'a snapshot in the paper ancestry allows replaying later exact changes');
+  const received = (await b.threads()).find(thread => thread.id === first)!;
+  await b.reply(first, 'Reply does not discard the shared document'); await b.sync(); await a.pull();
+  assert.deepEqual((await a.threads()).find(thread => thread.id === first)!.identityAnchor, received.identityAnchor);
+  assert.equal(await a.documentText(anchor), future);
+  await assert.rejects(a.create(anchor, 'Wrong snapshot', 'Not the paper'), /snapshot does not match/);
+});
+
+test('concurrent snapshot archives retain both documents and all reviews', async t => {
+  const { a, b } = await fixture(t);
+  const left = paper + 'Alice draft.\n', right = paper + 'Bob draft.\n';
+  const aa = enableEditTracking(createAnchor('main.tex', left, 4, 4, await a.head()), left);
+  const bb = enableEditTracking(createAnchor('main.tex', right, 4, 4, await b.head()), right);
+  await a.create(aa, 'Alice', left); await b.create(bb, 'Bob', right);
+  await a.sync(); await b.sync(); await a.pull();
+  assert.deepEqual(await a.threads(), await b.threads());
+  for (const store of [a, b]) {
+    assert.equal(await store.documentText(aa), left); assert.equal(await store.documentText(bb), right);
+  }
 });
