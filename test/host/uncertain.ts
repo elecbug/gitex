@@ -84,11 +84,15 @@ export async function uncertainTests(app: any, store: ReviewStore): Promise<void
     assert.equal((await current()).anchorHistory.length, 1);
 
     const resolved = view.getByRole('checkbox', { name: 'Resolved', exact: true });
-    await resolved.check();
-    await until(async () => !app.nativeThreads.has(key), 'resolved estimate hidden in source');
+    // Rendering follows the extension-host save asynchronously. A native click
+    // followed by the persisted state avoids check() asserting an interim render.
+    await resolved.click();
+    await until(async () => !app.nativeThreads.has(key) && (await current()).resolved &&
+      await resolved.isChecked() && await resolved.isEnabled(), 'resolved estimate hidden in source');
     assert.ok(item(), 'resolved estimates remain in Explorer');
-    await resolved.uncheck();
-    await until(async () => app.nativeThreads.has(key), 'reopened estimate visible');
+    await resolved.click();
+    await until(async () => app.nativeThreads.has(key) && !(await current()).resolved &&
+      !(await resolved.isChecked()) && await resolved.isEnabled(), 'reopened estimate visible');
     await setText(`${before}\n${after}\n\n${before}\n${after}\n`);
     assert.equal(item().location.kind, 'outdated');
     assert.equal(app.nativeThreads.has(key), false, 'ambiguous context is sidebar-only');

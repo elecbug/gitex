@@ -1,4 +1,4 @@
-import { Anchor, createAnchor, documentHash, EstimateCandidate, locateAnchor, Location } from './anchor';
+import { Anchor, documentHash, EstimateCandidate, locateAnchor, Location, renewAnchor } from './anchor';
 import { validAnchor } from './model';
 
 export interface LocalReference { basedOn: string; anchor: Anchor; updatedAt: string }
@@ -30,7 +30,7 @@ export class LocalTracking {
 
   snapshot(): LocalTrackingState { return { version: 1, entries: [...this.saved] }; }
 
-  locate(key: string, anchor: Anchor, basedOn: string, text: string, persist = true): Location {
+  locate(key: string, anchor: Anchor, basedOn: string, text: string, persist = true, identity = anchor): Location {
     let local = this.live.get(key);
     if (local && (local.basedOn !== basedOn || local.anchor.path !== anchor.path)) {
       this.live.delete(key); local = undefined;
@@ -54,13 +54,11 @@ export class LocalTracking {
         location = { ...recent, source: 'local' };
       }
     }
-    // Never turn an estimate or a conflict into the reference for the next edit.
-    if (location.kind === 'attached') {
-      const next = createAnchor(anchor.path, text, location.startLine, location.endLine, anchor.baseCommit);
-      if (!local || JSON.stringify(local.anchor) !== JSON.stringify(next)) {
-        local = { basedOn, anchor: next, updatedAt: new Date().toISOString() };
-        this.live.set(key, local);
-      }
+    // Never turn a weak attachment, estimate or conflict into the next reference.
+    const next = renewAnchor(local?.anchor ?? anchor, identity, text, location);
+    if (next && (!local || JSON.stringify(local.anchor) !== JSON.stringify(next))) {
+      local = { basedOn, anchor: next, updatedAt: new Date().toISOString() };
+      this.live.set(key, local);
     }
     // Save the last reliable hint when the source is saved, even if it has since
     // become uncertain. Unsaved editing alone never replaces the persisted hint.

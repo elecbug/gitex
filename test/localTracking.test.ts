@@ -29,18 +29,21 @@ test('source edits update local context and recover locations without changing t
   assert.deepEqual(anchor, original);
 });
 
-test('gradual source edits use recent reliable text while the original snapshot stays unchanged', () => {
+test('gradual source edits cannot walk the local reference away from its original identity', () => {
   const tracker = new LocalTracking();
   tracker.locate(key, anchor, revision, paper);
-  let text = paper;
-  for (const [from, to] of [['system', 'engine'], ['measures', 'estimates'], ['accuracy', 'latency'], ['validation', 'production'], ['dataset', 'workload']]) {
+  let text = paper.replace('system', 'systems');
+  assert.equal(tracker.locate(key, anchor, revision, text).kind, 'attached');
+  const reliable = structuredClone(tracker.get(key, revision));
+  assert.equal(reliable!.anchor.selected[0], selected.replace('system', 'systems'));
+  for (const [from, to] of [['measures', 'estimates'], ['accuracy', 'latency'], ['validation', 'production'], ['dataset', 'workload']]) {
     // Modify only the selected sentence.
     const document = text.split('\n'); document[1] = document[1].replace(from, to); text = document.join('\n');
-    assert.equal(tracker.locate(key, anchor, revision, text).kind, 'attached');
+    tracker.locate(key, anchor, revision, text);
+    assert.deepEqual(tracker.get(key, revision), reliable, 'weak sequential matches cannot renew the reference');
   }
   assert.notEqual(locateAnchor(anchor, text).kind, 'attached');
-  assert.equal(tracker.locate(key, anchor, revision, text).source, 'local');
-  assert.equal(tracker.get(key, revision)!.anchor.selected[0], text.split('\n')[1]);
+  assert.equal(tracker.locate(key, anchor, revision, text).kind, 'uncertain');
   assert.deepEqual(anchor.selected, [selected]);
 });
 
@@ -48,10 +51,12 @@ test('appended passages renew local hints without rewriting the saved reference'
   const tracker = new LocalTracking();
   const original = structuredClone(anchor);
   tracker.locate(key, anchor, revision, paper);
-  const extended = selected.replace('accuracy', 'precision') + ' Additional measurements cover independent test conditions and longer evaluation periods.';
+  // A source-only context change is allowed while the owned passage stays exact.
+  const extended = selected + ' Additional measurements cover independent test conditions and longer evaluation periods.';
   const updated = `${recentBefore}\n${extended}\n${recentAfter}`;
   assert.equal(tracker.locate(key, anchor, revision, updated).kind, 'attached');
-  assert.deepEqual(tracker.get(key, revision)!.anchor.selected, [extended]);
+  assert.deepEqual(tracker.get(key, revision)!.anchor.selected, [selected]);
+  assert.equal(tracker.get(key, revision)!.anchor.logicalRange!.endCharacter, selected.length);
   assert.deepEqual(anchor, original);
   const latest = structuredClone(tracker.get(key, revision));
   const location = tracker.locate(key, anchor, revision, deleted);

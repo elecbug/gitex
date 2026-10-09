@@ -113,7 +113,7 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   await editor.edit(edit => edit.replace(document.lineAt(3).range, 'Another destination!'));
   await app.panelAction(item(), { type: 'reply', body: 'Update at the manually chosen location', requestId: 'move-test' });
   await Promise.all([...app.syncs.values()]);
-  assert.deepEqual((await current()).anchor.selected, ['Another destination!']);
+  assert.deepEqual((await current()).anchor.selected, ['Another destination!'], 'distinctive preceding context and the saved file end support this small edit');
   assert.equal((await current()).anchor.path, 'moved.tex');
   const previousWidget = app.nativeThreads.get(item().key);
   const main = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(store.root, 'main.tex')));

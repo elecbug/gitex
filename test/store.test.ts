@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { createAnchor, locateAnchor } from '../src/anchor';
+import { createAnchor, locateAnchor, renewAnchor } from '../src/anchor';
 import { Git } from '../src/git';
 import { materialize, parseEvent, validPath } from '../src/model';
 import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../src/store';
@@ -292,6 +292,36 @@ test('concurrent reference updates converge without erasing either saved passage
   assert.equal(thread.anchorHistory.length, 3);
   assert.deepEqual(new Set(thread.anchorHistory.map(entry => entry.anchor.selected[0])), new Set([anchor.selected[0], left.selected[0], right.selected[0]]));
   assert.deepEqual(thread.anchor, thread.anchorHistory.at(-1)!.anchor);
+  assert.deepEqual(thread.identityAnchor, anchor, 'concurrent automatic updates cannot replace the identity');
+  assert.deepEqual(await a.threads(), await b.threads());
+});
+
+test('logical ranges and fixed identity survive shared saves, synchronization and reload', async t => {
+  const { a, b } = await fixture(t);
+  const before = 'We evaluated the protocol using an independent validation dataset.';
+  const original = 'The results show a significant improvement.';
+  const after = 'Further analysis describes the independent measurements in detail.';
+  const paper = `${before}\n${original}\n${after}`;
+  const identity = createAnchor('main.tex', paper, 1, 1, await a.head());
+  const id = await a.create(identity, 'Review the original sentence');
+  const edited = original.replace('show', 'showed');
+  const text = `${before}\n${edited} However, the overhead is considerable.\n${after}`;
+  const next = renewAnchor(identity, identity, text, locateAnchor(identity, text))!;
+  await a.reply(id, 'Review the revised original sentence', next, id);
+  await a.sync(); await b.pull();
+  const loaded = (await new ReviewStore(b.root).threads())[0];
+  assert.deepEqual(loaded.anchor.selected, [edited]);
+  assert.deepEqual(loaded.anchor.logicalRange, { startCharacter: 0, endCharacter: edited.length });
+  assert.deepEqual(loaded.identityAnchor, identity);
+  assert.deepEqual(loaded.anchorHistory.map(entry => entry.anchor.selected), [[original], [edited]]);
+  const changed = text.replace('significant', 'substantial');
+  assert.equal(renewAnchor(loaded.anchor, loaded.identityAnchor, changed, locateAnchor(loaded.anchor, changed)), undefined);
+  const previousRevision = loaded.anchorRevision;
+  await b.reply(id, 'A reply without promoting a weak anchor');
+  await b.sync(); await a.pull();
+  const current = (await a.threads())[0];
+  assert.equal(current.anchorRevision, previousRevision);
+  assert.deepEqual(current.identityAnchor, identity);
   assert.deepEqual(await a.threads(), await b.threads());
 });
 
@@ -375,6 +405,7 @@ test('concurrent manual moves keep their own before/after references and converg
   assert.deepEqual(new Set(moves.map(entry => entry.anchor.path)), new Set(['left.tex', 'right.tex']));
   for (const entry of moves) { assert.deepEqual(entry.from, anchor); assert.equal(entry.basedOn, id); }
   assert.equal(current.anchorRevision, moves.at(-1)!.id);
+  assert.deepEqual(current.identityAnchor, moves.at(-1)!.anchor);
   assert.deepEqual(await a.threads(), await b.threads());
 });
 
@@ -391,6 +422,7 @@ test('older automatic snapshots cannot undo a concurrent manual move in the same
     await a.sync(); await b.sync(); await a.pull();
     let current = (await a.threads())[0];
     assert.equal(current.anchorRevision, move); assert.deepEqual(current.anchor, destination);
+    assert.deepEqual(current.identityAnchor, destination);
     assert.ok(current.anchorHistory.some(entry => entry.anchor.selected[0] === oldUpdate.selected[0]));
     assert.notEqual(current.anchorHistory.at(-1)!.id, move, 'the current reference need not be the final history entry');
     assert.deepEqual(await a.threads(), await b.threads());
@@ -399,6 +431,7 @@ test('older automatic snapshots cannot undo a concurrent manual move in the same
     await b.sync(); await a.pull();
     current = (await a.threads())[0];
     assert.deepEqual(current.anchor, newer);
+    assert.deepEqual(current.identityAnchor, destination, 'automatic snapshots after a move keep the move identity');
   }
 });
 

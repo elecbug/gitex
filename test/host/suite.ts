@@ -12,6 +12,7 @@ import { uncertainTests } from './uncertain';
 import { localTrackingTests } from './localTracking';
 import { candidateTests } from './candidates';
 import { blankLineTests } from './blankLines';
+import { anchorProtectionTests } from './anchorProtection';
 
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('gitex-local.gitex');
@@ -103,21 +104,21 @@ export async function run(): Promise<void> {
   comment.body = 'Reviewed the slightly updated passage';
   await vscode.commands.executeCommand('gitex.saveComment', comment);
   let tracked = (await store.threads())[0];
-  assert.deepEqual(tracked.anchor.selected, ['A reviewed result!']);
-  assert.equal(tracked.anchor.startLine, 3);
+  assert.deepEqual(tracked.anchor.selected, ['A reviewed result.'], 'weak structural context cannot authorize a reference rewrite');
+  assert.equal(tracked.anchor.startLine, 2);
   assert.deepEqual(tracked.anchorHistory[0].anchor.selected, ['A reviewed result.']);
-  assert.equal(app.getChildren()[0].location.similarity, undefined, 'saving renews an exact reference');
+  assert.ok(app.getChildren()[0].location.similarity < 1, 'saving a comment does not promote a weak attachment');
   await updatePaper('A reviewed result!!');
   await vscode.commands.executeCommand('gitex.reply', { thread: native, text: 'Reviewing the next wording' });
   tracked = (await store.threads())[0];
-  assert.deepEqual(tracked.anchor.selected, ['A reviewed result!!']);
+  assert.deepEqual(tracked.anchor.selected, ['A reviewed result.']);
   const referenceBefore = tracked.anchor;
   await updatePaper('A completely unrelated observation about hardware.');
   await vscode.commands.executeCommand('gitex.refresh');
   assert.equal(app.getChildren()[0].location.kind, 'outdated');
   await vscode.commands.executeCommand('gitex.openThread', app.getChildren()[0]);
   assert.equal(vscode.window.activeTextEditor!.document.uri.scheme, 'gitex-original');
-  assert.match(vscode.window.activeTextEditor!.document.getText(), /A reviewed result!!/);
+  assert.match(vscode.window.activeTextEditor!.document.getText(), /A reviewed result\./);
   await app.panelAction(app.getChildren()[0], { type: 'reply', body: 'Outdated review still accepts replies', requestId: 'test' });
   assert.deepEqual((await store.threads())[0].anchor, referenceBefore, 'ambiguous or missing text must not reset the reference');
 
@@ -128,6 +129,7 @@ export async function run(): Promise<void> {
   assert.equal(document.isDirty, true, 'sync must preserve unsaved editor changes');
   await moveTests(app, store);
   await inlineSyncTests(app, store);
+  await anchorProtectionTests(app, store);
   await uncertainTests(app, store);
   await localTrackingTests(app, store);
   await blankLineTests(app, store);

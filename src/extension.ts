@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { Anchor, createAnchor, EstimateCandidate, Location, locationEstimates } from './anchor';
+import { Anchor, createAnchor, EstimateCandidate, Location, locationEstimates, renewAnchor } from './anchor';
 import { LocalTracking } from './localTracking';
 import { redact } from './git';
 import { ReviewComment, ReviewThread, validPath } from './model';
@@ -272,7 +272,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const reference = review.anchorRevision;
     const previous = cached.entries.get(key);
     if (!force && previous?.reference === reference) { return previous.location; }
-    const location = this.localTracking.locate(key, review.anchor, reference, document.getText(), !document.isDirty);
+    const location = this.localTracking.locate(key, review.anchor, reference, document.getText(), !document.isDirty, review.identityAnchor);
     cached.entries.set(key, { reference, location });
     return location;
   }
@@ -483,8 +483,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     try { document = await this.document(vscode.Uri.file(path.join(item.repository.store.root, review.anchor.path)), item.repository); } catch { return undefined; }
     const text = document.getText();
     const location = this.locateReview(item.repository, review, document);
-    if (location.kind !== 'attached') { return undefined; }
-    return { anchor: createAnchor(review.anchor.path, text, location.startLine, location.endLine, head), basedOn: review.anchorRevision };
+    const anchor = renewAnchor(review.anchor, review.identityAnchor, text, location, head);
+    return anchor ? { anchor, basedOn: review.anchorRevision } : undefined;
   }
 
   private async reply(reply: vscode.CommentReply): Promise<void> {

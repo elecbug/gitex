@@ -42,7 +42,7 @@ test('appending a long suffix preserves an exact prefix without a length penalty
   const anchor = createAnchor('main.tex', `Before\n${passage}\nAfter`, 1, 1, null);
   for (const tail of [' Extra detail.', ' Extra detail.'.repeat(4000)]) {
     assert.deepEqual(locateAnchor(anchor, `Before\n${passage}${tail}\nAfter`),
-      { kind: 'attached', startLine: 1, endLine: 1, similarity: 1 });
+      { kind: 'attached', startLine: 1, endLine: 1, similarity: 1, logicalRange: { startCharacter: 0, endCharacter: passage.length } });
   }
 });
 
@@ -58,7 +58,8 @@ test('only edits within the original passage count when a suffix is appended', (
     const plain = locateAnchor(anchor, `Before\n${edited}\nAfter`);
     const extended = locateAnchor(anchor, `Before\n${edited} We also report additional measurements and discuss their implications.\nAfter`);
     assert.equal(plain.kind, 'attached');
-    assert.deepEqual(extended, plain, 'suffix length must not dilute the score for substitutions, insertions or deletions');
+    assert.deepEqual(extended, { ...plain, logicalRange: { startCharacter: 0, endCharacter: edited.length } },
+      'the suffix must be excluded from both similarity and the logical range');
     if (extended.kind === 'attached') { assert.ok(extended.similarity! < 1, 'internal edits are still charged'); }
   }
 });

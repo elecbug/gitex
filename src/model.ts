@@ -20,6 +20,8 @@ export interface ReviewComment {
 export interface ReviewThread {
   id: string;
   anchor: Anchor;
+  /** Creation or last explicit move; automatic reference updates cannot replace it. */
+  identityAnchor: Anchor;
   anchorRevision: string;
   anchorHistory: { id: string; anchor: Anchor; author: Author; at: string; kind: 'original' | 'update' | 'move'; basedOn?: string; from?: Anchor }[];
   comments: ReviewComment[];
@@ -45,6 +47,13 @@ export function validAnchor(value: unknown): value is Anchor {
       !strings(a.before) || a.before.length > 3 || !strings(a.after) || a.after.length > 3 ||
       !Number.isSafeInteger(a.occurrences) || a.occurrences < 1 ||
       (a.afterBoundary !== undefined && a.afterBoundary !== 'document-end' && a.afterBoundary !== 'file-end')) { return false; }
+  if (a.logicalRange !== undefined) {
+    const range = a.logicalRange;
+    if (!range || typeof range !== 'object' || Array.isArray(range) ||
+        !Number.isSafeInteger(range.startCharacter) || range.startCharacter < 0 ||
+        !Number.isSafeInteger(range.endCharacter) || range.endCharacter < 0 ||
+        range.endCharacter !== a.selected.at(-1)!.length + (a.selected.length === 1 ? range.startCharacter : 0)) { return false; }
+  }
   return a.sentenceContext === undefined || (!!a.sentenceContext && !Array.isArray(a.sentenceContext) &&
     typeof a.sentenceContext === 'object' && (['before', 'after'] as const).every(side =>
       typeof a.sentenceContext![side] === 'string' && a.sentenceContext![side].length <= MAX_CONTEXT_LENGTH &&
@@ -83,7 +92,7 @@ export function materialize(events: ReviewEvent[]): ReviewThread[] {
   const references = new Map<string, { threadId: string; anchor: Anchor; clock: number; moveId: string }>();
   const activeMove = new Map<string, string>();
   for (const e of ordered) {
-    if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, anchorRevision: e.id, anchorHistory: [], comments: [], resolved: false }); }
+    if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, identityAnchor: e.anchor, anchorRevision: e.id, anchorHistory: [], comments: [], resolved: false }); }
   }
   for (const e of ordered) {
     const thread = threads.get(e.threadId);
@@ -99,7 +108,7 @@ export function materialize(events: ReviewEvent[]): ReviewThread[] {
       }
       const moveId = e.type === 'move' || e.type === 'create' ? e.id : base!.moveId;
       references.set(e.id, { threadId: e.threadId, anchor: e.anchor, clock: e.clock, moveId });
-      if (e.type === 'create' || e.type === 'move') { activeMove.set(e.threadId, moveId); }
+      if (e.type === 'create' || e.type === 'move') { activeMove.set(e.threadId, moveId); thread.identityAnchor = e.anchor; }
       const changed = JSON.stringify(e.anchor) !== JSON.stringify(thread.anchor);
       const recorded = !thread.anchorHistory.length || changed || e.type === 'move';
       if (recorded) {
