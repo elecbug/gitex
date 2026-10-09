@@ -1,0 +1,397 @@
+{
+  "schemaVersion": "1.2.0",
+  "generatedAt": "2026-10-09T12:51:42.948Z",
+  "projectInfo": {
+    "currentNodeVersion": {
+      "detected": "v18.19.1",
+      "selected": "24",
+      "versionManager": null
+    },
+    "targetLtsVersion": "24",
+    "packageManager": {
+      "name": "npm",
+      "version": "9.2.0"
+    },
+    "environments": {
+      "developmentOS": [
+        "macOS"
+      ],
+      "productionOS": [
+        "Ubuntu Linux"
+      ],
+      "ciEnvironment": "none"
+    },
+    "hasWorkspaces": false,
+    "monorepoTools": []
+  },
+  "scannedData": {
+    "packageJson": {
+      "content": {
+        "name": "gitex",
+        "displayName": "GiTex",
+        "description": "Git-backed line comments and collaboration for LaTeX papers.",
+        "version": "0.9.2",
+        "publisher": "gitex-local",
+        "license": "MIT",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/elecbug/gitex.git"
+        },
+        "engines": {
+          "vscode": "^1.90.0"
+        },
+        "categories": [
+          "Other",
+          "SCM Providers"
+        ],
+        "keywords": [
+          "latex",
+          "git",
+          "review",
+          "comments"
+        ],
+        "main": "./out/src/extension.js",
+        "activationEvents": [
+          "onStartupFinished"
+        ],
+        "extensionKind": [
+          "workspace"
+        ],
+        "capabilities": {
+          "untrustedWorkspaces": {
+            "supported": false
+          },
+          "virtualWorkspaces": {
+            "supported": false
+          }
+        },
+        "scripts": {
+          "compile": "tsc -p .",
+          "watch": "tsc -watch -p .",
+          "test": "npm run compile && node --test out/test/*.test.js",
+          "test:extension": "npm run compile && node out/test/host/run.js",
+          "package": "npx --yes @vscode/vsce@3.6.2 package --no-dependencies --allow-missing-repository",
+          "vscode:prepublish": "npm run compile"
+        },
+        "devDependencies": {
+          "@types/node": "^18.19.130",
+          "@types/vscode": "1.90.0",
+          "@vscode/test-electron": "3.1.0",
+          "playwright-core": "1.64.0",
+          "typescript": "5.9.3"
+        },
+        "contributes": {
+          "keybindings": [
+            {
+              "command": "gitex.addComment",
+              "key": "ctrl+shift+/",
+              "mac": "cmd+shift+/",
+              "when": "editorTextFocus && !editorReadonly && resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/i"
+            }
+          ],
+          "commands": [
+            {
+              "command": "gitex.editComment",
+              "title": "Edit Comment",
+              "icon": "$(edit)"
+            },
+            {
+              "command": "gitex.saveComment",
+              "title": "Save Edit",
+              "enablement": "!commentIsEmpty"
+            },
+            {
+              "command": "gitex.cancelEdit",
+              "title": "Cancel Edit"
+            },
+            {
+              "command": "gitex.commentHistory",
+              "title": "View Edit History",
+              "icon": "$(history)"
+            },
+            {
+              "command": "gitex.reviewThread",
+              "title": "Open GiTex Review",
+              "icon": "$(open-preview)"
+            },
+            {
+              "command": "gitex.pull",
+              "title": "GiTex: Fetch Comments",
+              "icon": "$(cloud-download)"
+            },
+            {
+              "command": "gitex.clone",
+              "title": "GiTex: Clone Repository"
+            },
+            {
+              "command": "gitex.applyRepository",
+              "title": "GiTex: Apply Repository to Current Folder"
+            },
+            {
+              "command": "gitex.connect",
+              "title": "GiTex: Connect Repository"
+            },
+            {
+              "command": "gitex.addComment",
+              "title": "GiTex: Add Line Comment"
+            },
+            {
+              "command": "gitex.sync",
+              "title": "GiTex: Sync Comments",
+              "icon": "$(sync)"
+            },
+            {
+              "command": "gitex.syncThread",
+              "title": "Sync",
+              "enablement": "commentIsEmpty"
+            },
+            {
+              "command": "gitex.refresh",
+              "title": "GiTex: Refresh Comments",
+              "icon": "$(refresh)"
+            },
+            {
+              "command": "gitex.reply",
+              "title": "Reply"
+            },
+            {
+              "command": "gitex.resolve",
+              "title": "Resolve Thread",
+              "icon": "$(check)"
+            },
+            {
+              "command": "gitex.reopen",
+              "title": "Reopen Thread",
+              "icon": "$(debug-restart)"
+            },
+            {
+              "command": "gitex.openThread",
+              "title": "GiTex: Open Comment"
+            },
+            {
+              "command": "gitex.moveComment",
+              "title": "GiTex: Move Comment to Selection",
+              "icon": "$(move)"
+            }
+          ],
+          "views": {
+            "explorer": [
+              {
+                "id": "gitex.comments",
+                "name": "GiTex Comments"
+              }
+            ]
+          },
+          "viewsWelcome": [
+            {
+              "view": "gitex.comments",
+              "contents": "Open a paper file to show comments for its Git repository. Repositories in subfolders are discovered automatically.\nSelect lines and run [Add Line Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Apply to Current Folder](command:gitex.applyRepository) · [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
+            }
+          ],
+          "menus": {
+            "editor/context": [
+              {
+                "command": "gitex.addComment",
+                "when": "resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/",
+                "group": "gitex"
+              },
+              {
+                "command": "gitex.moveComment",
+                "when": "resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/",
+                "group": "gitex"
+              }
+            ],
+            "view/title": [
+              {
+                "command": "gitex.sync",
+                "when": "view == gitex.comments",
+                "group": "navigation"
+              },
+              {
+                "command": "gitex.refresh",
+                "when": "view == gitex.comments",
+                "group": "navigation"
+              }
+            ],
+            "comments/commentThread/context": [
+              {
+                "command": "gitex.reply",
+                "when": "commentController == gitex",
+                "group": "inline@1"
+              },
+              {
+                "command": "gitex.syncThread",
+                "when": "commentController == gitex && !commentThreadIsEmpty",
+                "group": "inline@2"
+              }
+            ],
+            "comments/commentThread/title": [
+              {
+                "command": "gitex.reviewThread",
+                "when": "commentController == gitex && !commentThreadIsEmpty",
+                "group": "navigation@1"
+              },
+              {
+                "command": "gitex.resolve",
+                "when": "commentController == gitex && commentThread == gitex-open",
+                "group": "navigation"
+              },
+              {
+                "command": "gitex.reopen",
+                "when": "commentController == gitex && commentThread == gitex-resolved",
+                "group": "navigation"
+              },
+              {
+                "command": "gitex.moveComment",
+                "when": "commentController == gitex && !commentThreadIsEmpty",
+                "group": "navigation"
+              }
+            ],
+            "view/item/context": [
+              {
+                "command": "gitex.openThread",
+                "when": "view == gitex.comments",
+                "group": "navigation"
+              },
+              {
+                "command": "gitex.resolve",
+                "when": "view == gitex.comments && viewItem == gitex-open",
+                "group": "inline"
+              },
+              {
+                "command": "gitex.reopen",
+                "when": "view == gitex.comments && viewItem == gitex-resolved",
+                "group": "inline"
+              },
+              {
+                "command": "gitex.moveComment",
+                "when": "view == gitex.comments",
+                "group": "navigation"
+              }
+            ],
+            "commandPalette": [
+              {
+                "command": "gitex.syncThread",
+                "when": "false"
+              },
+              {
+                "command": "gitex.editComment",
+                "when": "false"
+              },
+              {
+                "command": "gitex.saveComment",
+                "when": "false"
+              },
+              {
+                "command": "gitex.cancelEdit",
+                "when": "false"
+              },
+              {
+                "command": "gitex.commentHistory",
+                "when": "false"
+              },
+              {
+                "command": "gitex.reviewThread",
+                "when": "false"
+              },
+              {
+                "command": "gitex.reply",
+                "when": "false"
+              },
+              {
+                "command": "gitex.resolve",
+                "when": "false"
+              },
+              {
+                "command": "gitex.reopen",
+                "when": "false"
+              },
+              {
+                "command": "gitex.openThread",
+                "when": "false"
+              }
+            ],
+            "comments/comment/title": [
+              {
+                "command": "gitex.editComment",
+                "when": "commentController == gitex && comment == gitex-comment",
+                "group": "inline@1"
+              },
+              {
+                "command": "gitex.commentHistory",
+                "when": "commentController == gitex && comment == gitex-comment",
+                "group": "inline@2"
+              }
+            ],
+            "comments/comment/context": [
+              {
+                "command": "gitex.saveComment",
+                "when": "commentController == gitex && comment == gitex-comment",
+                "group": "inline@1"
+              },
+              {
+                "command": "gitex.cancelEdit",
+                "when": "commentController == gitex && comment == gitex-comment",
+                "group": "inline@2"
+              }
+            ]
+          },
+          "configuration": {
+            "title": "GiTex",
+            "properties": {
+              "gitex.autoPullOnInteraction": {
+                "type": "boolean",
+                "default": true,
+                "scope": "resource",
+                "description": "Legacy preference retained for compatibility. Interactions no longer fetch comments.",
+                "markdownDeprecationMessage": "Use `#gitex.autoSyncOnSave#`. If that setting is unset, a previous false value keeps automatic synchronization disabled."
+              },
+              "gitex.remote": {
+                "type": "string",
+                "default": "origin",
+                "scope": "resource",
+                "description": "Git remote used by Sync Comments. The remote branch gitex-comments is reserved for GiTex."
+              },
+              "gitex.showResolved": {
+                "type": "boolean",
+                "default": true,
+                "description": "Legacy setting. Resolved threads always remain in GiTex Comments and are hidden from the paper editor.",
+                "deprecationMessage": "Resolved threads are now always listed in Explorer. Use their checkbox to resolve or reopen them."
+              },
+              "gitex.autoSyncOnSave": {
+                "type": "boolean",
+                "default": true,
+                "scope": "resource",
+                "description": "Fetch and push comments once in the background after creating a comment, replying, or saving an edit or manual location move. Opening, clicking, expanding, or canceling comments does not access the remote."
+              }
+            }
+          }
+        }
+      },
+      "isTruncated": false
+    },
+    "allPackageJsons": [],
+    "lockfile": {
+      "name": "package-lock.json",
+      "content": "{\n  \"name\": \"gitex\",\n  \"version\": \"0.9.2\",\n  \"lockfileVersion\": 3,\n  \"requires\": true,\n  \"packages\": {\n    \"\": {\n      \"name\": \"gitex\",\n      \"version\": \"0.9.2\",\n      \"license\": \"MIT\",\n      \"devDependencies\": {\n        \"@types/node\": \"^18.19.130\",\n        \"@types/vscode\": \"1.90.0\",\n        \"@vscode/test-electron\": \"3.1.0\",\n        \"playwright-core\": \"1.64.0\",\n        \"typescript\": \"5.9.3\"\n      },\n      \"engines\": {\n        \"vscode\": \"^1.90.0\"\n      }\n    },\n    \"node_modules/@types/node\": {\n      \"version\": \"18.19.130\",\n      \"resolved\": \"https://registry.npmjs.org/@types/node/-/node-18.19.130.tgz\",\n      \"integrity\": \"sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"undici-types\": \"~5.26.4\"\n      }\n    },\n    \"node_modules/@types/vscode\": {\n      \"version\": \"1.90.0\",\n      \"resolved\": \"https://registry.npmjs.org/@types/vscode/-/vscode-1.90.0.tgz\",\n      \"integrity\": \"sha512-oT+ZJL7qHS9Z8bs0+WKf/kQ27qWYR3trsXpq46YDjFqBsMLG4ygGGjPaJ2tyrH0wJzjOEmDyg9PDJBBhWg9pkQ==\",\n      \"dev\": true\n    },\n    \"node_modules/@vscode/test-electron\": {\n      \"version\": \"3.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/@vscode/test-electron/-/test-electron-3.1.0.tgz\",\n      \"integrity\": \"sha512-CRqv5u+YYoseuNVJ6Tyo4k0sF0mx4qnKMihRB0PjsUF8Dc0WKtCXo6CNL6nWWm5esfFQsQA/pejMj4ZbpJVLTw==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"http-proxy-agent\": \"^7.0.2\",\n        \"https-proxy-agent\": \"^7.0.5\",\n        \"jszip\": \"^3.10.1\",\n        \"ora\": \"^8.1.0\",\n        \"semver\": \"^7.6.2\"\n      },\n      \"engines\": {\n        \"node\": \">=22\"\n      }\n    },\n    \"node_modules/agent-base\": {\n      \"version\": \"7.1.4\",\n      \"resolved\": \"https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz\",\n      \"integrity\": \"sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">= 14\"\n      }\n    },\n    \"node_modules/ansi-regex\": {\n      \"version\": \"6.4.0\",\n      \"resolved\": \"https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.4.0.tgz\",\n      \"integrity\": \"sha512-KzTVk2tCWAHtYrvvvaP8bJKJq2pVinhLcGEQdtLIYPbmNGNyYe8QwNaTUYQp2J7/vIsUKt5QCqAfUkYyG9DkOw==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/ansi-regex?sponsor=1\"\n      }\n    },\n    \"node_modules/chalk\": {\n      \"version\": \"5.6.2\",\n      \"resolved\": \"https://registry.npmjs.org/chalk/-/chalk-5.6.2.tgz\",\n      \"integrity\": \"sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \"^12.17.0 || ^14.13 || >=16.0.0\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/chalk?sponsor=1\"\n      }\n    },\n    \"node_modules/cli-cursor\": {\n      \"version\": \"5.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/cli-cursor/-/cli-cursor-5.0.0.tgz\",\n      \"integrity\": \"sha512-aCj4O5wKyszjMmDT4tZj93kxyydN/K5zPWSCe6/0AV/AA1pqe5ZBIw0a2ZfPQV7lL5/yb5HsUreJ6UFAF1tEQw==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"restore-cursor\": \"^5.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/cli-spinners\": {\n      \"version\": \"2.9.2\",\n      \"resolved\": \"https://registry.npmjs.org/cli-spinners/-/cli-spinners-2.9.2.tgz\",\n      \"integrity\": \"sha512-ywqV+5MmyL4E7ybXgKys4DugZbX0FC6LnwrhjuykIjnK9k8OQacQ7axGKnjDXWNhns0xot3bZI5h55H8yo9cJg==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=6\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/core-util-is\": {\n      \"version\": \"1.0.3\",\n      \"resolved\": \"https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.3.tgz\",\n      \"integrity\": \"sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==\",\n      \"dev\": true\n    },\n    \"node_modules/debug\": {\n      \"version\": \"4.4.3\",\n      \"resolved\": \"https://registry.npmjs.org/debug/-/debug-4.4.3.tgz\",\n      \"integrity\": \"sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"ms\": \"^2.1.3\"\n      },\n      \"engines\": {\n        \"node\": \">=6.0\"\n      },\n      \"peerDependenciesMeta\": {\n        \"supports-color\": {\n          \"optional\": true\n        }\n      }\n    },\n    \"node_modules/emoji-regex\": {\n      \"version\": \"10.6.0\",\n      \"resolved\": \"https://registry.npmjs.org/emoji-regex/-/emoji-regex-10.6.0.tgz\",\n      \"integrity\": \"sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A==\",\n      \"dev\": true\n    },\n    \"node_modules/get-east-asian-width\": {\n      \"version\": \"1.7.0\",\n      \"resolved\": \"https://registry.npmjs.org/get-east-asian-width/-/get-east-asian-width-1.7.0.tgz\",\n      \"integrity\": \"sha512-XjH1AECxf0giL2V1aU8vKyRR2ppRUb5c0EvT7zuJTokQ74bNo52zOtghqdWIqrhUD79fo3x0WfKZdOqxF6LG1Q==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/http-proxy-agent\": {\n      \"version\": \"7.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz\",\n      \"integrity\": \"sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"agent-base\": \"^7.1.0\",\n        \"debug\": \"^4.3.4\"\n      },\n      \"engines\": {\n        \"node\": \">= 14\"\n      }\n    },\n    \"node_modules/https-proxy-agent\": {\n      \"version\": \"7.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz\",\n      \"integrity\": \"sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"agent-base\": \"^7.1.2\",\n        \"debug\": \"4\"\n      },\n      \"engines\": {\n        \"node\": \">= 14\"\n      }\n    },\n    \"node_modules/immediate\": {\n      \"version\": \"3.0.6\",\n      \"resolved\": \"https://registry.npmjs.org/immediate/-/immediate-3.0.6.tgz\",\n      \"integrity\": \"sha512-XXOFtyqDjNDAQxVfYxuF7g9Il/IbWmmlQg2MYKOH8ExIT1qg6xc4zyS3HaEEATgs1btfzxq15ciUiY7gjSXRGQ==\",\n      \"dev\": true\n    },\n    \"node_modules/inherits\": {\n      \"version\": \"2.0.4\",\n      \"resolved\": \"https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz\",\n      \"integrity\": \"sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==\",\n      \"dev\": true\n    },\n    \"node_modules/is-interactive\": {\n      \"version\": \"2.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/is-interactive/-/is-interactive-2.0.0.tgz\",\n      \"integrity\": \"sha512-qP1vozQRI+BMOPcjFzrjXuQvdak2pHNUMZoeG2eRbiSqyvbEf/wQtEOTOX1guk6E3t36RkaqiSt8A/6YElNxLQ==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/is-unicode-supported\": {\n      \"version\": \"2.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/is-unicode-supported/-/is-unicode-supported-2.1.0.tgz\",\n      \"integrity\": \"sha512-mE00Gnza5EEB3Ds0HfMyllZzbBrmLOX3vfWoj9A9PEnTfratQ/BcaJOuMhnkhjXvb2+FkY3VuHqtAGpTPmglFQ==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/isarray\": {\n      \"version\": \"1.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz\",\n      \"integrity\": \"sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ==\",\n      \"dev\": true\n    },\n    \"node_modules/jszip\": {\n      \"version\": \"3.10.2\",\n      \"resolved\": \"https://registry.npmjs.org/jszip/-/jszip-3.10.2.tgz\",\n      \"integrity\": \"sha512-3l+rb15IOWtUhU0H5MFqES/T6Kh7abYwjosBey/vD6hDt8zoEffkSC5Ws5SGtgVw3gBx2NEbhTeSW1+kWkpyTQ==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"lie\": \"~3.3.0\",\n        \"pako\": \"~1.0.2\",\n        \"readable-stream\": \"~2.3.6\",\n        \"setimmediate\": \"^1.0.5\"\n      }\n    },\n    \"node_modules/lie\": {\n      \"version\": \"3.3.0\",\n      \"resolved\": \"https://registry.npmjs.org/lie/-/lie-3.3.0.tgz\",\n      \"integrity\": \"sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"immediate\": \"~3.0.5\"\n      }\n    },\n    \"node_modules/log-symbols\": {\n      \"version\": \"6.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/log-symbols/-/log-symbols-6.0.0.tgz\",\n      \"integrity\": \"sha512-i24m8rpwhmPIS4zscNzK6MSEhk0DUWa/8iYQWxhffV8jkI4Phvs3F+quL5xvS0gdQR0FyTCMMH33Y78dDTzzIw==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"chalk\": \"^5.3.0\",\n        \"is-unicode-supported\": \"^1.3.0\"\n      },\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/log-symbols/node_modules/is-unicode-supported\": {\n      \"version\": \"1.3.0\",\n      \"resolved\": \"https://registry.npmjs.org/is-unicode-supported/-/is-unicode-supported-1.3.0.tgz\",\n      \"integrity\": \"sha512-43r2mRvz+8JRIKnWJ+3j8JtjRKZ6GmjzfaE/qiBJnikNnYv/6bagRJ1kUhNk8R5EX/GkobD+r+sfxCPJsiKBLQ==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/mimic-function\": {\n      \"version\": \"5.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/mimic-function/-/mimic-function-5.0.1.tgz\",\n      \"integrity\": \"sha512-VP79XUPxV2CigYP3jWwAUFSku2aKqBH7uTAapFWCBqutsbmDo96KY5o8uh6U+/YSIn5OxJnXp73beVkpqMIGhA==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/ms\": {\n      \"version\": \"2.1.3\",\n      \"resolved\": \"https://registry.npmjs.org/ms/-/ms-2.1.3.tgz\",\n      \"integrity\": \"sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==\",\n      \"dev\": true\n    },\n    \"node_modules/onetime\": {\n      \"version\": \"7.0.0\",\n      \"resolved\": \"https://registry.npmjs.org/onetime/-/onetime-7.0.0.tgz\",\n      \"integrity\": \"sha512-VXJjc87FScF88uafS3JllDgvAm+c/Slfz06lorj2uAY34rlUu0Nt+v8wreiImcrgAjjIHp1rXpTDlLOGw29WwQ==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"mimic-function\": \"^5.0.0\"\n      },\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/ora\": {\n      \"version\": \"8.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/ora/-/ora-8.2.0.tgz\",\n      \"integrity\": \"sha512-weP+BZ8MVNnlCm8c0Qdc1WSWq4Qn7I+9CJGm7Qali6g44e/PUzbjNqJX5NJ9ljlNMosfJvg1fKEGILklK9cwnw==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"chalk\": \"^5.3.0\",\n        \"cli-cursor\": \"^5.0.0\",\n        \"cli-spinners\": \"^2.9.2\",\n        \"is-interactive\": \"^2.0.0\",\n        \"is-unicode-supported\": \"^2.0.0\",\n        \"log-symbols\": \"^6.0.0\",\n        \"stdin-discarder\": \"^0.2.2\",\n        \"string-width\": \"^7.2.0\",\n        \"strip-ansi\": \"^7.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/pako\": {\n      \"version\": \"1.0.11\",\n      \"resolved\": \"https://registry.npmjs.org/pako/-/pako-1.0.11.tgz\",\n      \"integrity\": \"sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==\",\n      \"dev\": true\n    },\n    \"node_modules/playwright-core\": {\n      \"version\": \"1.64.0\",\n      \"resolved\": \"https://registry.npmjs.org/playwright-core/-/playwright-core-1.64.0.tgz\",\n      \"integrity\": \"sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg==\",\n      \"dev\": true,\n      \"bin\": {\n        \"playwright-core\": \"cli.js\"\n      },\n      \"engines\": {\n        \"node\": \">=20\"\n      }\n    },\n    \"node_modules/process-nextick-args\": {\n      \"version\": \"2.0.1\",\n      \"resolved\": \"https://registry.npmjs.org/process-nextick-args/-/process-nextick-args-2.0.1.tgz\",\n      \"integrity\": \"sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag==\",\n      \"dev\": true\n    },\n    \"node_modules/readable-stream\": {\n      \"version\": \"2.3.8\",\n      \"resolved\": \"https://registry.npmjs.org/readable-stream/-/readable-stream-2.3.8.tgz\",\n      \"integrity\": \"sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"core-util-is\": \"~1.0.0\",\n        \"inherits\": \"~2.0.3\",\n        \"isarray\": \"~1.0.0\",\n        \"process-nextick-args\": \"~2.0.0\",\n        \"safe-buffer\": \"~5.1.1\",\n        \"string_decoder\": \"~1.1.1\",\n        \"util-deprecate\": \"~1.0.1\"\n      }\n    },\n    \"node_modules/restore-cursor\": {\n      \"version\": \"5.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/restore-cursor/-/restore-cursor-5.1.0.tgz\",\n      \"integrity\": \"sha512-oMA2dcrw6u0YfxJQXm342bFKX/E4sG9rbTzO9ptUcR/e8A33cHuvStiYOwH7fszkZlZ1z/ta9AAoPk2F4qIOHA==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"onetime\": \"^7.0.0\",\n        \"signal-exit\": \"^4.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/safe-buffer\": {\n      \"version\": \"5.1.2\",\n      \"resolved\": \"https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz\",\n      \"integrity\": \"sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==\",\n      \"dev\": true\n    },\n    \"node_modules/semver\": {\n      \"version\": \"7.8.5\",\n      \"resolved\": \"https://registry.npmjs.org/semver/-/semver-7.8.5.tgz\",\n      \"integrity\": \"sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==\",\n      \"dev\": true,\n      \"bin\": {\n        \"semver\": \"bin/semver.js\"\n      },\n      \"engines\": {\n        \"node\": \">=10\"\n      }\n    },\n    \"node_modules/setimmediate\": {\n      \"version\": \"1.0.5\",\n      \"resolved\": \"https://registry.npmjs.org/setimmediate/-/setimmediate-1.0.5.tgz\",\n      \"integrity\": \"sha512-MATJdZp8sLqDl/68LfQmbP8zKPLQNV6BIZoIgrscFDQ+RsvK/BxeDQOgyxKKoh0y/8h3BqVFnCqQ/gd+reiIXA==\",\n      \"dev\": true\n    },\n    \"node_modules/signal-exit\": {\n      \"version\": \"4.1.0\",\n      \"resolved\": \"https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz\",\n      \"integrity\": \"sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=14\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/isaacs\"\n      }\n    },\n    \"node_modules/stdin-discarder\": {\n      \"version\": \"0.2.2\",\n      \"resolved\": \"https://registry.npmjs.org/stdin-discarder/-/stdin-discarder-0.2.2.tgz\",\n      \"integrity\": \"sha512-UhDfHmA92YAlNnCfhmq0VeNL5bDbiZGg7sZ2IvPsXubGkiNa9EC+tUTsjBRsYUAz87btI6/1wf4XoVvQ3uRnmQ==\",\n      \"dev\": true,\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/string_decoder\": {\n      \"version\": \"1.1.1\",\n      \"resolved\": \"https://registry.npmjs.org/string_decoder/-/string_decoder-1.1.1.tgz\",\n      \"integrity\": \"sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"safe-buffer\": \"~5.1.0\"\n      }\n    },\n    \"node_modules/string-width\": {\n      \"version\": \"7.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/string-width/-/string-width-7.2.0.tgz\",\n      \"integrity\": \"sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"emoji-regex\": \"^10.3.0\",\n        \"get-east-asian-width\": \"^1.0.0\",\n        \"strip-ansi\": \"^7.1.0\"\n      },\n      \"engines\": {\n        \"node\": \">=18\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/sponsors/sindresorhus\"\n      }\n    },\n    \"node_modules/strip-ansi\": {\n      \"version\": \"7.2.0\",\n      \"resolved\": \"https://registry.npmjs.org/strip-ansi/-/strip-ansi-7.2.0.tgz\",\n      \"integrity\": \"sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w==\",\n      \"dev\": true,\n      \"dependencies\": {\n        \"ansi-regex\": \"^6.2.2\"\n      },\n      \"engines\": {\n        \"node\": \">=12\"\n      },\n      \"funding\": {\n        \"url\": \"https://github.com/chalk/strip-ansi?sponsor=1\"\n      }\n    },\n    \"node_modules/typescript\": {\n      \"version\": \"5.9.3\",\n      \"resolved\": \"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz\",\n      \"integrity\": \"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==\",\n      \"dev\": true,\n      \"bin\": {\n        \"tsc\": \"bin/tsc\",\n        \"tsserver\": \"bin/tsserver\"\n      },\n      \"engines\": {\n        \"node\": \">=14.17\"\n      }\n    },\n    \"node_modules/undici-types\": {\n      \"version\": \"5.26.5\",\n      \"resolved\": \"https://registry.npmjs.org/undici-types/-/undici-types-5.26.5.tgz\",\n      \"integrity\": \"sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==\",\n      \"dev\": true\n    },\n    \"node_modules/util-deprecate\": {\n      \"version\": \"1.0.2\",\n      \"resolved\": \"https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz\",\n      \"integrity\": \"sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==\",\n      \"dev\": true\n    }\n  }\n}\n",
+      "isTruncated": false
+    },
+    "lockfilesDetected": [
+      "package-lock.json"
+    ],
+    "ciConfigsFound": [],
+    "cppAddons": {
+      "gypFilesFound": [],
+      "cmakeListsFound": [],
+      "dependenciesFound": []
+    },
+    "monorepoConfigs": []
+  },
+  "staticApiAnalysis": {
+    "status": "success",
+    "error": null,
+    "findings": []
+  },
+  "warnings": [],
+  "additionalNotes": ""
+}

@@ -53,7 +53,7 @@ Automatic sync runs once after saving a comment, reply, edit, or manual location
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.9.2.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.10.0.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -93,7 +93,7 @@ If an inline save fails, GiTex opens the review panel with your unsaved draft so
 
 Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. Selecting another thread replaces the content of the same tab; switching back restores its unsaved edit/reply drafts and expanded sections while the tab remains open. It supports editing, replies, and expandable **History** sections. **Open source** returns to the associated passage; **Open saved excerpt** opens the saved text when the location is outdated. Comment deletion is not provided.
 
-Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.9.2. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
+Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.10.0. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
 
 ## Review panel layout
 
@@ -120,7 +120,7 @@ GiTex 0.9.0 keeps two references:
 | **Saved reference** | Creating a comment, saving an attached reply/edit, or manually moving the thread. | Immutable Git review events, shared with collaborators and retained in **Tracking history**. |
 | **Local context** | Editing the source while the passage remains reliably **Attached**. It captures the latest matched text and surrounding context. | VS Code workspace storage for this local repository; never pushed through Git. Unsaved source changes update session memory only. Saving the source persists the last reliable reference for later sessions. |
 
-Tracking checks both references. Local context can recover a passage or estimate its location after the shared text or surroundings no longer match; these results show **Local context** in the review panel, Explorer, and inline caption. Conflicting attached locations or disjoint estimates are rejected. Estimates within the same bounded interval remain usable; the stronger result wins, with recent local spacing breaking ties. **Uncertain** and **Outdated** results never replace the last reliable local reference. A new shared reference, including a manual move, invalidates local hints based on the previous revision. Expand **Saved reference** and **Local context** in the review panel to compare them. Local context is a replaceable hint, not an additional shared history entry; source editing does not create review events or trigger sync.
+Tracking checks both references. Local context can recover a passage or estimate its location after the shared text or surroundings no longer match; these results show **Local context** in the review panel, Explorer, and inline caption. When shared and local references point to disjoint positions, GiTex retains both as **Uncertain** candidates instead of hiding the thread as Outdated. Both positions are marked as **Saved reference candidate** or **Local context candidate**. Overlapping estimates remain a single result; the stronger result wins, with recent local spacing breaking ties. **Uncertain** and **Outdated** results never replace the last reliable local reference. A new shared reference, including a manual move, invalidates local hints based on the previous revision. Expand **Saved reference** and **Local context** in the review panel to compare them. Local context is a replaceable hint, not an additional shared history entry; source editing does not create review events or trigger sync.
 
 Final passages also store an optional `afterBoundary`: **End of document** for `\end{document}`, or **End of file** when no document terminator is present. Blank lines, comments, and closing environment/label lines can precede that boundary. Text after `\end{document}` is excluded from following-sentence context. If the passage disappears, a distinctive preceding context plus the nearby saved end boundary can produce **Uncertain**, even without a following sentence. The end boundary alone is insufficient, and a saved document terminator must still be present.
 
@@ -129,7 +129,7 @@ GiTex tries exact text, then whitespace-normalized and similar text, then surrou
 | Tracking result | Meaning | Display |
 | --- | --- | --- |
 | **Attached** | The original passage is found exactly or with sufficient similarity. | Normal inline comment; approximate matches show **Similar text**. |
-| **Uncertain** | The passage cannot be matched, but a context pair, a saved end boundary with preceding context, or one unique identifying context with saved spacing provides an estimated location. | Inline comment with a muted, dashed marker and explicit **Uncertain · Estimated location** text; also listed in Explorer. |
+| **Uncertain** | The passage cannot be matched, but a context pair, a saved end boundary with preceding context, or one unique identifying context with saved spacing provides an estimated location. | A muted marker on an existing candidate line, or an unnumbered virtual row for a missing line. Diverging saved/local candidates are both shown; Explorer retains one thread. |
 | **Outdated** | Neither identity nor location can be determined reliably. | Listed in Explorer without a source marker. |
 
 Context-only tracking first looks for a unique ordered pair with a small intervening gap. Short contexts require exact text matches (allowing terminal punctuation changes); stronger contexts also tolerate small edits and rewrapping. A preceding heading plus short following prose can be enough. Blank lines do not count as intervening prose, and saved relative spacing helps place the marker within the estimated interval. When one side disappears, one unique identifying context can retain a lower-confidence estimate if its distance from the passage was saved. Repeated LaTeX structures, heading-only pairs, reversed or distant context pairs, and ambiguous candidates remain unresolved. A saved end boundary can also support identifying preceding context. The returned `confidence` is a heuristic score, not a calibrated probability. `Uncertain` and its estimated line are computed from the current document; they are never saved as permanent thread states.
@@ -149,6 +149,10 @@ The review panel's **Tracking history** shows the original passage and later ref
 In 0.9.1, previously empty sentence fields can gain unpunctuated context in **Local context** when the passage is reliably attached. Existing **Saved reference** snapshots and history stay unchanged; save an attached comment/reply or move it manually to renew the shared reference.
 
 Version 0.9.2 favors **Uncertain** whenever usable localization evidence remains. LaTeX line wrapping still combines `랄랄루` and `랄랄라.` into `랄랄루 랄랄라.`; an older saved `랄랄루` can match the beginning of that extended context. Removing a commented `헬로` between a unique heading and this following text therefore keeps an estimated marker. Estimates never become new shared or local reference snapshots automatically.
+
+Version 0.10.0 shows missing-line estimates as **Uncertain · Estimated passage** rows above the following source line using [VS Code CodeLens](https://code.visualstudio.com/api/language-extensions/programmatic-language-features#codelens---show-actionable-context-information-within-source-code). These rows preview the saved passage, have no source line number, and do not modify the file, line count, dirty state, Git history, or LaTeX output. Existing blank or replacement lines still use ordinary candidate markers. Keep VS Code's `editor.codeLens` enabled to see virtual rows; the inline review remains available if it is disabled. At the physical end of a file without a following line, the CodeLens sits above the last line and explicitly says **After final line**; the comment widget sits below that line.
+
+If saved and local references disagree, both markers open the same review tab and share one comment, draft, and history. The review lists both candidates with **Open saved candidate** and **Open local candidate** navigation. Exploring them never confirms either location or renews an anchor. Use **Move to editor selection** to confirm the intended passage and record the move; resolving hides both markers and reopening restores them. The candidates and virtual rows are derived from the current document, so existing review data needs no migration.
 
 ## Move a comment manually
 
@@ -239,7 +243,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.9.2.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.10.0.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

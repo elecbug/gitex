@@ -31,6 +31,9 @@ h3 { font-size: 12px; font-weight: 600; }
 .location-row { align-items: flex-start; flex-wrap: wrap; gap: 6px 12px; }
 .line-range { color: var(--muted); font-family: var(--vscode-editor-font-family); font-size: 12px; margin-top: 6px; }
 .context-note { color: var(--vscode-list-warningForeground, var(--vscode-editorWarning-foreground)); font-size: 12px; padding: 0 18px 12px; overflow-wrap: anywhere; }
+.candidate-locations { padding: 0 18px 12px; }
+.candidate-location { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); padding: 8px 0; }
+.candidate-location .reference-label { margin: 0; }
 details > summary { cursor: pointer; list-style: none; }
 summary::-webkit-details-marker { display: none; }
 summary::after { content: ''; width: 6px; height: 6px; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(-45deg); flex: 0 0 6px; margin: 0 3px; }

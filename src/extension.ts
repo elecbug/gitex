@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { Anchor, createAnchor, Location } from './anchor';
+import { Anchor, createAnchor, EstimateCandidate, Location, locationEstimates } from './anchor';
 import { LocalTracking } from './localTracking';
 import { redact } from './git';
 import { ReviewComment, ReviewThread, validPath } from './model';
@@ -23,13 +23,13 @@ const supported = /\.(tex|bib|sty|cls|ltx)$/i;
 class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private readonly controller = vscode.comments.createCommentController('gitex', 'GiTex');
   private readonly changed = new vscode.EventEmitter<ThreadItem | undefined>();
+  private readonly lensesChanged = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   private readonly output = vscode.window.createOutputChannel('GiTex');
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
   private readonly uncertainDecoration = vscode.window.createTextEditorDecorationType({
     isWholeLine: true, borderStyle: 'dashed', borderWidth: '0 0 1px 0',
-    borderColor: new vscode.ThemeColor('descriptionForeground'),
-    after: { contentText: '  Uncertain · Estimated location', color: new vscode.ThemeColor('descriptionForeground'), fontStyle: 'italic' }
+    borderColor: new vscode.ThemeColor('descriptionForeground')
   });
   private readonly repositories = new Map<string, Repository>();
   private readonly dirtyRepositories = new Set<string>();
@@ -71,6 +71,9 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       void this.checkResolved(event.items).catch(error => { this.report(error); this.changed.fire(undefined); });
     }),
       vscode.workspace.registerTextDocumentContentProvider('gitex-original', { provideTextDocumentContent: uri => this.excerpts.get(uri.toString()) ?? '' }),
+      vscode.languages.registerCodeLensProvider({ scheme: 'file' }, {
+        onDidChangeCodeLenses: this.lensesChanged.event, provideCodeLenses: document => this.provideEstimateLenses(document)
+      }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => this.invalidateRepositories()),
       vscode.workspace.onDidOpenTextDocument(document => { if (document.uri.scheme === 'file') { this.schedule(); } }),
       vscode.workspace.onDidChangeTextDocument(event => {
@@ -317,7 +320,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       if (location.kind === 'outdated') { continue; }
       if (review.resolved) { continue; }
       visible.add(item.key);
-      const range = location.kind === 'uncertain' ? new vscode.Range(location.estimatedLine, 0, location.estimatedLine, 0) :
+      const markerLine = location.kind === 'uncertain' ? (location.insertionLine === undefined ? location.estimatedLine : Math.max(0, location.insertionLine - 1)) : 0;
+      const range = location.kind === 'uncertain' ? new vscode.Range(markerLine, 0, markerLine, 0) :
         new vscode.Range(location.startLine, 0, location.endLine, 0);
       let thread = this.nativeThreads.get(item.key);
       if (thread && thread.uri.toString() !== item.uri.toString()) {
@@ -335,7 +339,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       thread.range = range;
       // Plain text avoids loading images or executing links supplied in shared comments.
       thread.comments = review.comments.map(comment => this.nativeComment(item, comment));
-      thread.label = location.kind === 'uncertain' ? 'GiTex · Uncertain · Estimated location' :
+      thread.label = location.kind === 'uncertain' ? location.candidates ? 'GiTex · Uncertain · 2 candidate locations' : 'GiTex · Uncertain · Estimated location' :
         location.similarity === undefined ? 'GiTex' : `GiTex · Similar text (${Math.round(location.similarity * 100)}%)`;
       if (location.source === 'local') { thread.label += ' · Local context'; }
       thread.contextValue = review.resolved ? 'gitex-resolved' : 'gitex-open';
@@ -351,6 +355,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     }
     this.items = next;
     this.renderUncertainLocations();
+    this.lensesChanged.fire();
     this.renderPanels();
     this.changed.fire(undefined);
     const repository = this.activeRoot ? this.repositories.get(this.activeRoot) : undefined;
@@ -366,16 +371,48 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   }
 
   getChildren(): ThreadItem[] { return this.items.filter(item => item.repository.store.root === this.activeRoot); }
+  private estimateMarkers(document: vscode.TextDocument): { item: ThreadItem; estimate: EstimateCandidate }[] {
+    if (document.uri.scheme !== 'file' || !supported.test(document.uri.fsPath)) { return []; }
+    return this.getChildren().filter(item => !item.review.resolved && item.uri.toString() === document.uri.toString())
+      .flatMap(item => locationEstimates(item.location).map(estimate => ({ item, estimate })));
+  }
+
+  private estimateExcerpt(item: ThreadItem, estimate: EstimateCandidate): string {
+    const anchor = estimate.reference === 'local' ? this.localTracking.get(item.key, item.review.anchorRevision)?.anchor : undefined;
+    return (anchor ?? item.review.anchor).selected.join('\n');
+  }
+
+  private provideEstimateLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+    return this.estimateMarkers(document).filter(({ item, estimate }) => estimate.insertionLine !== undefined ||
+      item.location.kind === 'uncertain' && item.location.candidates).map(({ item, estimate }) => {
+      const line = Math.max(0, Math.min(estimate.insertionLine ?? estimate.estimatedLine, document.lineCount - 1));
+      const reference = estimate.reference === 'local' ? 'Local context' : 'Saved reference';
+      const multiple = item.location.kind === 'uncertain' && !!item.location.candidates;
+      const preview = this.estimateExcerpt(item, estimate).replace(/\s+/gu, ' ').slice(0, 80);
+      const afterEnd = estimate.insertionLine === document.lineCount;
+      return new vscode.CodeLens(new vscode.Range(line, 0, line, 0), {
+        title: `Uncertain · ${multiple ? reference + ' candidate · ' : ''}${afterEnd ? 'After final line' : 'Estimated passage'}: ${preview}`,
+        command: 'gitex.reviewThread', arguments: [item.key],
+        tooltip: `${reference}\n${estimate.reason}\n${this.estimateExcerpt(item, estimate)}\nOpen the review to compare references and reconnect manually.`
+      });
+    });
+  }
+
   private renderUncertainLocations(): void {
     for (const editor of vscode.window.visibleTextEditors) {
       const decorations: vscode.DecorationOptions[] = [];
-      for (const item of this.getChildren()) {
-        if (item.review.resolved || item.location.kind !== 'uncertain' || item.uri.toString() !== editor.document.uri.toString()) { continue; }
+      for (const { item, estimate } of this.estimateMarkers(editor.document)) {
+        // A gap has a CodeLens row of its own; do not underline the following sentence.
+        if (estimate.insertionLine !== undefined) { continue; }
+        const reference = estimate.reference === 'local' ? 'Local context' : 'Saved reference';
+        const multiple = item.location.kind === 'uncertain' && !!item.location.candidates;
         const hover = new vscode.MarkdownString();
-        hover.appendText('Uncertain · Estimated location\n\n' + item.location.reason + '\n\nSaved reference:\n' + item.review.anchor.selected.join('\n'));
+        hover.appendText(`Uncertain · ${reference}\n\n${estimate.reason}\n\n${this.estimateExcerpt(item, estimate)}`);
         hover.appendMarkdown(`\n\n[Open saved reference and reconnect](command:gitex.reviewThread?${encodeURIComponent(JSON.stringify([item.key]))})`);
         hover.isTrusted = { enabledCommands: ['gitex.reviewThread'] };
-        decorations.push({ range: new vscode.Range(item.location.estimatedLine, 0, item.location.estimatedLine, 0), hoverMessage: hover });
+        decorations.push({ range: new vscode.Range(estimate.estimatedLine, 0, estimate.estimatedLine, 0), hoverMessage: hover,
+          renderOptions: multiple ? undefined : { after: { contentText: '  Uncertain · Estimated location',
+            color: new vscode.ThemeColor('descriptionForeground'), fontStyle: 'italic' } } });
       }
       editor.setDecorations(this.uncertainDecoration, decorations);
     }
@@ -386,7 +423,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const node = new vscode.TreeItem(first.body.split('\n')[0].slice(0, 100));
     node.id = item.key;
     const location = item.location;
-    const line = location.kind === 'attached' ? location.startLine + 1 : location.kind === 'uncertain' ? `~${location.estimatedLine + 1}` : '?';
+    const line = location.kind === 'attached' ? location.startLine + 1 : location.kind === 'uncertain' ?
+      locationEstimates(location).map(estimate => `~${estimate.estimatedLine + 1}`).join(' / ') : '?';
     const state = location.kind === 'uncertain' ? ' · Uncertain' : location.kind === 'outdated' ? ' · Outdated' : location.similarity !== undefined ? ' · Similar text' : '';
     node.description = `${item.review.anchor.path}:${line}${item.review.resolved ? ' · Resolved' : ''}${state}${location.source === 'local' ? ' · Local context' : ''}`;
     node.tooltip = `${first.author.name}: ${first.body}\n${location.kind !== 'attached' ? location.reason : item.review.resolved ? 'Resolved' : 'Open'}`;
@@ -502,17 +540,21 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     await this.afterSave(repository);
   }
 
-  private async open(item: ThreadItem): Promise<void> {
+  private async open(item: ThreadItem, reference?: 'saved' | 'local'): Promise<void> {
     // Recompute locations before navigation; the user may have edited since this tree item was created.
     await this.refresh();
     item = this.items.find(current => current.key === item.key) ?? item;
     if (item.location.kind !== 'outdated') {
-      const selection = item.location.kind === 'uncertain' ? new vscode.Range(item.location.estimatedLine, 0, item.location.estimatedLine, 0) :
+      const candidate = reference ? locationEstimates(item.location).find(estimate => estimate.reference === reference) : undefined;
+      const line = candidate?.estimatedLine ?? (item.location.kind === 'uncertain' ? item.location.estimatedLine : 0);
+      const selection = item.location.kind === 'uncertain' ? new vscode.Range(line, 0, line, 0) :
         new vscode.Range(item.location.startLine, 0, item.location.endLine, 0);
       const sourceEditor = vscode.window.visibleTextEditors.find(editor => editor.document.uri.toString() === item.uri.toString());
       await vscode.window.showTextDocument(await this.document(item.uri, item.repository), { selection, viewColumn: sourceEditor?.viewColumn });
       const native = this.nativeThreads.get(item.key);
-      if (native) { native.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded; }
+      if (native && (!candidate || item.location.kind === 'uncertain' && candidate.estimatedLine === item.location.estimatedLine)) {
+        native.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+      }
     } else {
       const uri = vscode.Uri.from({ scheme: 'gitex-original', path: `/${item.review.id}/original.txt`,
         query: `${item.repository.store.root}:${item.review.comments.map(comment => comment.revisions.at(-1)!.id).join(',')}` });
@@ -540,7 +582,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     native.revisionId = latest.id;
     native.contextValue = 'gitex-comment';
     native.timestamp = new Date(comment.at);
-    native.label = [item.location.kind === 'uncertain' ? 'Uncertain · Estimated location' : '',
+    native.label = [item.location.kind === 'uncertain' ? item.location.candidates ? 'Uncertain · 2 candidate locations' : 'Uncertain · Estimated location' : '',
       native.editingRevision && native.editingRevision !== latest.id ? 'Changed remotely · draft preserved' :
         comment.revisions.length > 1 ? `Edited by ${latest.author.name}` : ''].filter(Boolean).join(' · ') || undefined;
     if (native.mode !== vscode.CommentMode.Editing) { native.body = new vscode.MarkdownString().appendText(comment.body); }
@@ -679,7 +721,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     }
     else if (action.type === 'move') { await this.moveComment(item); return; }
     else if (action.type === 'resolve') { await this.setResolved(item, action.resolved); return; }
-    else if (action.type === 'source') { await this.open(item); return; }
+    else if (action.type === 'source') { await this.open(item, action.reference); return; }
     await this.afterSave(item.repository);
   }
 
@@ -779,7 +821,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.disposed = true;
     clearTimeout(this.timer);
     for (const panel of this.panels.values()) { panel.dispose(); }
-    this.controller.dispose(); this.changed.dispose(); this.output.dispose(); this.status.dispose(); this.uncertainDecoration.dispose();
+    this.controller.dispose(); this.changed.dispose(); this.lensesChanged.dispose(); this.output.dispose(); this.status.dispose(); this.uncertainDecoration.dispose();
   }
 }
 

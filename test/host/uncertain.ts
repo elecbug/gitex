@@ -45,7 +45,7 @@ export async function uncertainTests(app: any, store: ReviewStore): Promise<void
     await setText(`${before}\n${after}\n`);
     assert.equal(item().location.kind, 'uncertain');
     const native = app.nativeThreads.get(key) as vscode.CommentThread;
-    assert.equal(native.range!.start.line, 1);
+    assert.equal(native.range!.start.line, 0, 'the comment widget sits after the preceding line, before the following sentence');
     assert.match(native.label!, /Uncertain/);
     assert.match(native.comments[0].label!, /Uncertain/);
     assert.match(app.getTreeItem(item()).description, /~2.*Uncertain/);

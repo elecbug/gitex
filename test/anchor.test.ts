@@ -390,3 +390,31 @@ test('legacy end-document context works without rewriting the original anchor', 
   assert.equal(locateAnchor(legacy, `${preceding}\n\\end{document}`).kind, 'uncertain');
   assert.deepEqual(legacy, before);
 });
+
+test('deleted lines use a gap before the following sentence without claiming that sentence', () => {
+  const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
+  const removed = locateAnchor(anchor, `${preceding}\n${following}`);
+  assert.equal(removed.kind, 'uncertain');
+  if (removed.kind === 'uncertain') { assert.equal(removed.insertionLine, 1); }
+  for (const replacement of ['', 'An unrelated observation about compiler design.']) {
+    const location = locateAnchor(anchor, `${preceding}\n${replacement}\n${following}`);
+    assert.equal(location.kind, 'uncertain');
+    if (location.kind === 'uncertain') { assert.equal(location.insertionLine, undefined, 'an existing blank or replacement line remains a real candidate line'); }
+  }
+});
+
+test('gap positions distinguish the beginning, document terminator, and physical end of a file', () => {
+  const cases: [string, number, string, number][] = [
+    [`${target}\n${following}`, 0, following, 0],
+    [`${preceding}\n${target}\n\\end{document}`, 1, `${preceding}\n\\end{document}`, 1],
+    [`${preceding}\n${target}`, 1, preceding, 1]
+  ];
+  for (const [original, line, updated, gap] of cases) {
+    const location = locateAnchor(createAnchor('main.tex', original, line, line, null), updated);
+    assert.equal(location.kind, 'uncertain');
+    if (location.kind === 'uncertain') { assert.equal(location.insertionLine, gap); }
+  }
+  const replaced = locateAnchor(createAnchor('main.tex', `${preceding}\n${target}`, 1, 1, null), `${preceding}\nAn unrelated observation about compiler design.`);
+  assert.equal(replaced.kind, 'uncertain');
+  if (replaced.kind === 'uncertain') { assert.equal(replaced.insertionLine, undefined); }
+});

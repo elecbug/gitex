@@ -15,9 +15,22 @@ export interface Anchor {
   afterBoundary?: 'document-end' | 'file-end';
 }
 
+export interface Estimate {
+  estimatedLine: number;
+  estimatedRange?: { startLine: number; endLine: number };
+  /** A gap before this line; document.length means after the final physical line. */
+  insertionLine?: number;
+  confidence: number;
+  reason: string;
+}
+export interface EstimateCandidate extends Estimate { reference: 'saved' | 'local' }
 export type Location = ({ kind: 'attached'; startLine: number; endLine: number; similarity?: number } |
-  { kind: 'uncertain'; estimatedLine: number; estimatedRange?: { startLine: number; endLine: number }; confidence: number; reason: string } |
+  ({ kind: 'uncertain'; candidates?: EstimateCandidate[] } & Estimate) |
   { kind: 'outdated'; reason: string }) & { source?: 'local' };
+
+export function locationEstimates(location: Location): EstimateCandidate[] {
+  return location.kind === 'uncertain' ? location.candidates ?? [{ ...location, reference: location.source === 'local' ? 'local' : 'saved' }] : [];
+}
 
 export const MAX_CONTEXT_LENGTH = 4096;
 
@@ -396,7 +409,7 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
   const afterSpacing = contextSpacing(anchor, 'after', saved.after);
   const maxGap = Math.min(2000, Math.max(160, normalize(anchor.selected.join(' ')).length * 3 + 80));
   const maxLines = Math.max(8, Math.min(40, anchor.selected.length * 3 + 4));
-  const candidates: { estimatedLine: number; estimatedRange: { startLine: number; endLine: number }; confidence: number; start: number; end: number }[] = [];
+  const candidates: (Omit<Estimate, 'reason'> & { start: number; end: number })[] = [];
   for (const left of before) {
     for (const right of after) {
       const gap = right.start - left.end;
@@ -407,7 +420,11 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
       const startLine = Math.min(leftLine + 1, rightLine);
       const estimate = beforeSpacing !== undefined ? leftLine + beforeSpacing : afterSpacing !== undefined ?
         rightLine - afterSpacing - (anchor.selected.length - 1) : startLine;
-      candidates.push({ estimatedLine: Math.max(startLine, Math.min(estimate, rightLine)), estimatedRange: { startLine, endLine: rightLine },
+      const estimatedLine = Math.max(startLine, Math.min(estimate, rightLine));
+      const insertionLine = estimatedLine === rightLine && proseLine(document[rightLine]) ?
+        useEnd && boundary.kind === 'file-end' ? leftLine === rightLine ? document.length : undefined : rightLine : undefined;
+      candidates.push({ estimatedLine, estimatedRange: { startLine, endLine: rightLine },
+        ...(insertionLine !== undefined ? { insertionLine } : {}),
         confidence: (left.score + right.score) / 2 - 0.1 * gap / maxGap, start: left.start, end: right.end });
     }
   }
@@ -426,13 +443,16 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
     const estimatedLine = Math.max(0, Math.min(estimate, document.length - 1));
     const between = side === 'before' ? document.slice(line + 1, estimatedLine + 1) : document.slice(estimatedLine, line);
     if (between.some(structural)) { return undefined; }
-    return { kind: 'uncertain', estimatedLine, confidence: match.score * 0.75,
+    const insertionLine = side === 'after' && estimatedLine === line ? line :
+      side === 'before' && estimate >= document.length ? document.length : undefined;
+    return { kind: 'uncertain', estimatedLine, ...(insertionLine !== undefined ? { insertionLine } : {}), confidence: match.score * 0.75,
       reason: `The original passage could not be matched. Only the ${side === 'before' ? 'preceding' : 'following'} context remains; the location is estimated using saved spacing. Review the saved reference before reconnecting.` };
   }
   const alternative = candidates.find(candidate => candidate.start !== best.start || candidate.end !== best.end);
   if (alternative && best.confidence - alternative.confidence < 0.08) { return undefined; }
   const shortPenalty = (distinctive(saved.before) ? 0 : 0.08) + (useEnd || distinctive(saved.after) ? 0 : 0.08);
   return { kind: 'uncertain', estimatedLine: best.estimatedLine, estimatedRange: best.estimatedRange, confidence: best.confidence - shortPenalty,
+    ...(best.insertionLine !== undefined ? { insertionLine: best.insertionLine } : {}),
     reason: useEnd ? 'The original passage could not be matched. Its location is estimated from preceding context and the document end; review the saved reference before reconnecting.' :
       'The original passage could not be matched. Its location is estimated from the surrounding context; review the saved reference before reconnecting.' };
 }

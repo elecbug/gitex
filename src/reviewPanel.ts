@@ -12,7 +12,7 @@ export interface ReviewContext {
   status: string;
 }
 
-export type ReviewAction = { type: 'ready' | 'source' } |
+export type ReviewAction = { type: 'ready' } | { type: 'source'; reference?: 'saved' | 'local' } |
   { type: 'edit'; commentId: string; body: string; basedOn: string; requestId: string } |
   { type: 'reply'; body: string; requestId: string } |
   { type: 'move'; requestId: string } |
@@ -82,7 +82,7 @@ function validAction(value: unknown): value is ReviewAction {
   const event = value as Record<string, unknown>;
   if (event.type === 'ready') { return true; }
   if (typeof event.key !== 'string') { return false; }
-  if (event.type === 'source') { return true; }
+  if (event.type === 'source') { return event.reference === undefined || event.reference === 'saved' || event.reference === 'local'; }
   if (event.type === 'move') { return typeof event.requestId === 'string'; }
   if (event.type === 'resolve') { return typeof event.resolved === 'boolean' && typeof event.requestId === 'string'; }
   if (typeof event.body !== 'string' || !event.body.trim() || event.body.length > 100_000 || typeof event.requestId !== 'string') { return false; }

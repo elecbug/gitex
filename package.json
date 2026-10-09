@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -46,7 +46,7 @@
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
-    "@types/node": "^18.19.0",
+    "@types/node": "^18.19.130",
     "@types/vscode": "1.90.0",
     "@vscode/test-electron": "3.1.0",
     "playwright-core": "1.64.0",

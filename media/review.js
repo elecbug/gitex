@@ -94,6 +94,7 @@
     const match = element('span', '', locationRow, 'badge'); match.id = 'match-state';
     const lines = element('p', '', heading, 'line-range');
     const contextNote = element('p', '', contextCard, 'context-note'); contextNote.hidden = true;
+    const candidates = element('div', undefined, contextCard, 'candidate-locations'); candidates.id = 'candidate-locations'; candidates.hidden = true;
     const passage = element('details', undefined, contextCard, 'passage'); passage.open = true;
     const passageSummary = element('summary', 'Saved reference', passage);
     const excerpt = element('pre', '', element('div', undefined, passage, 'passage-content'));
@@ -134,7 +135,7 @@
     icon('history', trackingSummary);
     const trackingLabel = element('span', 'Tracking history', trackingSummary);
     const trackingEntries = element('div', undefined, tracking, 'revision-list');
-    const view = { key, root, repository, location, match, lines, contextNote, excerpt, passage, passageSummary, source,
+    const view = { key, root, repository, location, match, lines, contextNote, candidates, excerpt, passage, passageSummary, source,
       surroundings, surroundingsLabel, surroundingsBody, localContext, localSummary, localBody,
       count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), error: '',
       trackingLabel, trackingEntries, trackingSignature: '', scroll: 0 };
@@ -210,20 +211,35 @@
         saved[side] || '(Not available in this saved reference)', parent);
     }
   }
+  function estimatePosition(estimate) {
+    if (estimate.insertionLine === undefined) return 'Line ' + (estimate.estimatedLine + 1);
+    if (estimate.insertionLine === 0) return 'Before line 1';
+    if (estimate.insertionLine > estimate.estimatedLine) return 'After line ' + estimate.insertionLine;
+    return 'Between lines ' + estimate.insertionLine + ' and ' + (estimate.insertionLine + 1);
+  }
   function renderContext(view, review, context) {
     view.repository.textContent = context.repository;
     view.location.textContent = review.anchor.path;
     const attached = context.location.kind === 'attached';
     const uncertain = context.location.kind === 'uncertain';
     view.root.dataset.location = context.location.kind;
-    view.lines.textContent = uncertain ? 'Estimated location · Line ' + (context.location.estimatedLine + 1) :
+    view.lines.textContent = uncertain ? context.location.candidates ? '2 candidate locations' : 'Estimated location · ' + estimatePosition(context.location) :
       (attached ? '' : 'Saved reference · ') + range(attached ? context.location : review.anchor);
     view.match.textContent = uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
       'Similar text · ' + Math.round(context.location.similarity * 100) + '%';
     if (context.location.source === 'local') view.match.textContent += ' · Local context';
+    if (uncertain && context.location.candidates) view.match.textContent += ' · 2 candidates';
     view.match.dataset.tone = uncertain ? 'uncertain' : !attached ? 'warning' : 'accent';
     view.contextNote.hidden = attached;
     view.contextNote.textContent = attached ? '' : context.location.reason + ' Select source lines and use Move to editor selection to reattach.';
+    view.candidates.hidden = !uncertain || !context.location.candidates;
+    view.candidates.replaceChildren();
+    for (const candidate of uncertain ? context.location.candidates || [] : []) {
+      const row = element('div', undefined, view.candidates, 'candidate-location');
+      element('p', (candidate.reference === 'local' ? 'Local context' : 'Saved reference') + ' · ' + estimatePosition(candidate), row, 'reference-label');
+      const open = button(candidate.reference === 'local' ? 'Open local candidate' : 'Open saved candidate', row, 'quiet', 'source');
+      open.onclick = () => vscode.postMessage({ type: 'source', key: view.key, reference: candidate.reference });
+    }
     view.passageSummary.textContent = 'Saved reference · ' + range(review.anchor);
     view.excerpt.textContent = review.anchor.selected.join('\n');
     if (uncertain && view.lastLocation !== 'uncertain') view.passage.open = true;

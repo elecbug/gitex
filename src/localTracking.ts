@@ -1,4 +1,4 @@
-import { Anchor, createAnchor, documentHash, locateAnchor, Location } from './anchor';
+import { Anchor, createAnchor, documentHash, EstimateCandidate, locateAnchor, Location } from './anchor';
 import { validAnchor } from './model';
 
 export interface LocalReference { basedOn: string; anchor: Anchor; updatedAt: string }
@@ -41,13 +41,12 @@ export class LocalTracking {
     let location = shared;
     if (local && documentHash(text) !== anchor.documentHash) {
       const recent = locateAnchor(local.anchor, text);
-      const separateEstimates = shared.kind === 'uncertain' && recent.kind === 'uncertain' &&
-        ((shared.estimatedRange?.endLine ?? shared.estimatedLine) < (recent.estimatedRange?.startLine ?? recent.estimatedLine) ||
-         (recent.estimatedRange?.endLine ?? recent.estimatedLine) < (shared.estimatedRange?.startLine ?? shared.estimatedLine));
-      if (shared.kind === 'attached' && recent.kind === 'attached' &&
-          (shared.endLine < recent.startLine || recent.endLine < shared.startLine) ||
-          separateEstimates) {
-        location = { kind: 'outdated', reason: 'Shared and local references point to different passages. Review the saved references and reconnect manually.' };
+      const savedCandidate = this.candidate(shared, 'saved'), localCandidate = this.candidate(recent, 'local');
+      if (savedCandidate && localCandidate &&
+          ((savedCandidate.estimatedRange?.endLine ?? savedCandidate.estimatedLine) < (localCandidate.estimatedRange?.startLine ?? localCandidate.estimatedLine) ||
+           (localCandidate.estimatedRange?.endLine ?? localCandidate.estimatedLine) < (savedCandidate.estimatedRange?.startLine ?? savedCandidate.estimatedLine))) {
+        location = { ...localCandidate, kind: 'uncertain', candidates: [savedCandidate, localCandidate],
+          reason: 'Saved and local references suggest different locations. Both candidates are shown; review them and reconnect manually to confirm the passage.' };
       } else if (shared.kind !== 'attached' && recent.kind !== 'outdated' &&
           (recent.kind === 'attached' || shared.kind === 'outdated' ||
            shared.kind === 'uncertain' && recent.kind === 'uncertain' && (recent.confidence > shared.confidence ||
@@ -67,5 +66,13 @@ export class LocalTracking {
     // become uncertain. Unsaved editing alone never replaces the persisted hint.
     if (persist && local && this.saved.get(key) !== local) { this.saved.set(key, local); this.generation++; }
     return location;
+  }
+
+  private candidate(location: Location, reference: 'saved' | 'local'): EstimateCandidate | undefined {
+    if (location.kind === 'outdated') { return undefined; }
+    return location.kind === 'uncertain' ? { ...location, reference } : {
+      reference, estimatedLine: location.startLine, estimatedRange: { startLine: location.startLine, endLine: location.endLine },
+      confidence: location.similarity ?? 1, reason: 'This reference matches text here, but the other reference points to another location.'
+    };
   }
 }
