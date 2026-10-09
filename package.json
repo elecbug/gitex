@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -113,6 +113,11 @@
         "icon": "$(sync)"
       },
       {
+        "command": "gitex.syncThread",
+        "title": "Sync",
+        "enablement": "commentIsEmpty"
+      },
+      {
         "command": "gitex.refresh",
         "title": "GiTex: Refresh Comments",
         "icon": "$(refresh)"
@@ -184,7 +189,12 @@
         {
           "command": "gitex.reply",
           "when": "commentController == gitex",
-          "group": "inline"
+          "group": "inline@1"
+        },
+        {
+          "command": "gitex.syncThread",
+          "when": "commentController == gitex && !commentThreadIsEmpty",
+          "group": "inline@2"
         }
       ],
       "comments/commentThread/title": [
@@ -232,6 +242,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "gitex.syncThread",
+          "when": "false"
+        },
         {
           "command": "gitex.editComment",
           "when": "false"

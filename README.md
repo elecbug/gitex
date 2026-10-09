@@ -52,7 +52,7 @@ Automatic sync runs once after saving a comment, reply, edit, or manual location
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.7.0.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.7.1.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -65,6 +65,8 @@ You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaT
 5. Select lines in a paper file and press **Ctrl+Shift+/** (**Cmd+Shift+/** on macOS) to enter a comment. With no selection, the comment applies to the current line. You can also use **GiTex: Add Line Comment** in the editor context menu or the comment button in the editor gutter.
 6. Saving a comment, reply, or edit automatically syncs reviews in the background. Use **GiTex: Fetch Comments** to receive reviews without publishing, or **GiTex: Sync Comments** to receive and publish manually.
 7. Commit and synchronize changes to the paper itself through Source Control.
+
+Expanded inline threads also have a **Sync** button beside **Reply**. It performs the same pull + push as Explorer's **Sync Comments**, synchronizing all saved review events in that thread's repository, even when automatic sync is disabled. To protect unsent replies, this button is enabled only while the reply field is empty; you can use Explorer's **Sync Comments** while drafting a reply.
 
 You can comment on unsaved edits as long as the file already exists on disk. If a collaborator has not received the commented passage yet, its thread appears as Outdated with the original excerpt available. Selections are stored as whole-line ranges.
 
@@ -90,7 +92,7 @@ If an inline save fails, GiTex opens the review panel with your unsaved draft so
 
 Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. Selecting another thread replaces the content of the same tab; switching back restores its unsaved edit/reply drafts and expanded sections while the tab remains open. It supports editing, replies, and expandable **History** sections. **Open source** returns to the associated passage; **Open saved excerpt** opens the saved text when the location is outdated. Comment deletion is not provided.
 
-Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.7.0. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
+Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.7.1. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
 
 ## Review panel layout
 
@@ -205,7 +207,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.7.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.7.1.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

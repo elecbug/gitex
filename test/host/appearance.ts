@@ -20,7 +20,7 @@ export async function reviewAppearance(view: Frame): Promise<void> {
     ] as const) {
       await config.update('colorTheme', theme, vscode.ConfigurationTarget.Workspace);
       await vscode.commands.executeCommand('vscode.setEditorLayout', { orientation: 0, groups: [{ size: 1 - width }, { size: width }] });
-      await view.waitForFunction(`document.body.classList.contains('${kind}')`);
+      await view.locator(`body.${kind}`).waitFor({ state: 'visible' });
       await view.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       await view.evaluate('window.scrollTo(0, 0)');
       assert.equal(await view.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth'), true,

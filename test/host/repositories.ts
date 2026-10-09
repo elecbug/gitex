@@ -128,6 +128,18 @@ export async function repositoryTests(app: any, existing: ReviewStore): Promise<
   assert.equal(calls.at(-1), `sync:${inner}`);
   assert.equal((await a.store.threads()).length, 2, 'nested comments do not enter the parent metadata');
 
+  await select(path.join(first, 'main.tex'));
+  const inlineThread = app.nativeThreads.get(aKey);
+  await select(path.join(second, 'main.tex'));
+  await vscode.commands.executeCommand('gitex.syncThread', { thread: inlineThread, text: '' });
+  const deadline = Date.now() + 15_000;
+  while (!(await a.store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']))) {
+    assert.ok(Date.now() < deadline, 'inline sync must finish for its original repository');
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.equal(calls.at(-1), `sync:${first}`, 'inline sync uses its thread repository, even after selecting another paper');
+  assertScope(second);
+
   await select(path.join(collection, 'notes.tex'));
   assert.equal(app.getChildren().length, 0);
   assert.equal(app.nativeThreads.size, 0);

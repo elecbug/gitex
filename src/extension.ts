@@ -91,6 +91,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.command('gitex.refresh', () => { this.invalidateRepositories(); return this.refresh(); });
     this.command('gitex.pull', () => this.pull());
     this.command('gitex.sync', () => this.sync());
+    this.command('gitex.syncThread', (reply: vscode.CommentReply) => this.syncThread(reply));
   }
 
   private command(name: string, handler: (...args: any[]) => unknown): void {
@@ -679,8 +680,17 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     void vscode.window.showInformationMessage(`GiTex connected to ${remote}. Use Sync Comments to share reviews.`);
   }
 
-  private async sync(): Promise<void> {
-    const repository = await this.chooseRepository();
+  private syncThread(reply: vscode.CommentReply): void {
+    // VS Code clears the reply form after any commentThread/context action completes.
+    // Only allow an empty form, then return before network I/O so typing during sync is safe.
+    if (reply?.text) { return; }
+    const item = reply?.thread && this.threadItems.get(reply.thread);
+    if (!item) { throw new Error('Open the comment from GiTex Comments again before syncing.'); }
+    void this.sync(item.repository).catch(error => this.report(error));
+  }
+
+  private async sync(repository?: Repository): Promise<void> {
+    repository ??= await this.chooseRepository();
     if (!repository) { return; }
     const remote = vscode.workspace.getConfiguration('gitex', repository.folder.uri).get('remote', 'origin');
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `GiTex: Syncing comments with ${remote}…` },
