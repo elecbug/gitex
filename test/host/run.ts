@@ -21,6 +21,10 @@ async function main() {
     await git.text(['add', 'main.tex']);
     await git.text(['-c', 'commit.gpgsign=false', 'commit', '-m', 'Test paper']);
     await git.text(['push', '-u', 'origin', 'main']);
+    // Start in workspace mode so adding another folder during repository tests does not
+    // reload the window (and terminate the extension test runner).
+    const workspaceFile = path.join(temp, 'papers.code-workspace');
+    await writeFile(workspaceFile, JSON.stringify({ folders: [{ path: workspace }] }));
     const port = await new Promise<number>((resolve, reject) => {
       const server = createServer();
       server.on('error', reject);
@@ -35,7 +39,7 @@ async function main() {
       extensionDevelopmentPath: path.resolve(__dirname, '../../..'),
       extensionTestsPath: path.join(__dirname, 'suite'),
       extensionTestsEnv: { GITEX_CDP_PORT: String(port) },
-      launchArgs: [workspace, '--no-sandbox', '--disable-gpu', '--disable-workspace-trust', '--disable-extensions',
+      launchArgs: [workspaceFile, '--no-sandbox', '--disable-gpu', '--disable-workspace-trust', '--disable-extensions',
         `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
         '--skip-welcome', '--skip-release-notes', '--user-data-dir', path.join(temp, 'user-data'), '--extensions-dir', path.join(temp, 'extensions')]
     });

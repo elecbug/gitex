@@ -92,11 +92,13 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   const beforeInvalid = await store.git.ref(LOCAL_REF);
   editor.selection = new vscode.Selection(4, 0, 4, 0);
   await assert.rejects(app.moveComment(item()), /non-empty/);
+  const movingItem = item();
   const outside = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(path.dirname(store.root), 'apply-target', 'notes.tex')));
   await vscode.window.showTextDocument(outside, vscode.ViewColumn.One);
-  await assert.rejects(app.moveComment(item()), /same open Git repository/);
+  await assert.rejects(app.moveComment(movingItem), /same open Git repository/);
   assert.equal(await store.git.ref(LOCAL_REF), beforeInvalid);
   editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
+  await app.refresh();
   editor.selection = new vscode.Selection(3, 0, 3, 0);
   const native = app.nativeThreads.get(item().key).comments[0];
   await vscode.commands.executeCommand('gitex.editComment', native);

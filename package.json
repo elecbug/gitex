@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -152,7 +152,7 @@
     "viewsWelcome": [
       {
         "view": "gitex.comments",
-        "contents": "Select lines in a LaTeX file and run [Add Line Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Apply to Current Folder](command:gitex.applyRepository) · [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
+        "contents": "Open a paper file to show comments for its Git repository. Repositories in subfolders are discovered automatically.\nSelect lines and run [Add Line Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Apply to Current Folder](command:gitex.applyRepository) · [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
       }
     ],
     "menus": {
