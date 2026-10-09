@@ -16,7 +16,7 @@ export interface Anchor {
 }
 
 export type Location = ({ kind: 'attached'; startLine: number; endLine: number; similarity?: number } |
-  { kind: 'uncertain'; estimatedLine: number; confidence: number; reason: string } |
+  { kind: 'uncertain'; estimatedLine: number; estimatedRange?: { startLine: number; endLine: number }; confidence: number; reason: string } |
   { kind: 'outdated'; reason: string }) & { source?: 'local' };
 
 export const MAX_CONTEXT_LENGTH = 4096;
@@ -318,6 +318,26 @@ function distinctive(text: string): boolean {
     (prose.match(/[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]/gu)?.length ?? 0) >= 12;
 }
 
+function usableContext(text: string): boolean {
+  if (headingTitle(text) !== undefined) { return distinctive(text); }
+  if (structural(text)) { return false; }
+  const prose = text.replace(/\\[a-zA-Z]+\*?(?:\[[^\]]*\])?/gu, '');
+  return (prose.match(/\p{L}/gu)?.length ?? 0) >= 4 ||
+    (prose.match(/[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]/gu)?.length ?? 0) >= 2;
+}
+
+/** Recover spacing only from lines actually saved next to the selected passage. */
+function contextSpacing(anchor: Anchor, side: 'before' | 'after', context: string): number | undefined {
+  const saved = anchor[side].map(proseLine);
+  const offset = (side === 'before' ? [...saved].reverse() : saved).findIndex(Boolean);
+  if (offset < 0) { return undefined; }
+  const line = side === 'before' ? saved.length - offset - 1 : offset;
+  if (side === 'before' ? context.endsWith(saved[line]) : context.startsWith(saved[line])) {
+    return side === 'before' ? saved.length - line : line + 1;
+  }
+  return undefined;
+}
+
 function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
   // Older anchors use their actual saved lines, never context invented from today's document.
   const legacy = surroundingSentences([...anchor.before, '', ...anchor.after], anchor.before.length, anchor.before.length);
@@ -327,43 +347,56 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
     after: anchor.sentenceContext?.after || (savedBoundary ? '' : legacy.after || normalize(anchor.after.filter(line => !structural(line)).map(proseLine).join(' ')))
   };
   const useEnd = !!savedBoundary && !saved.after;
-  if (!distinctive(saved.before) || (!useEnd && !distinctive(saved.after)) || saved.before === saved.after ||
+  if (saved.before === saved.after ||
       (headingTitle(saved.before) !== undefined && headingTitle(saved.after) !== undefined) ||
       saved.before.length > MAX_CONTEXT_LENGTH || saved.after.length > MAX_CONTEXT_LENGTH) { return undefined; }
+  const boundary = endBoundary(document);
+  if (boundary.kind === 'document-end') { document = document.slice(0, boundary.line + 1); }
   const index = sentenceIndex(document);
   type Match = { start: number; end: number; score: number };
   const budget = { remaining: 4_000_000 };
+  let ambiguousContext = false;
   const find = (text: string): Match[] => {
     const found: Match[] = [];
     const title = headingTitle(text);
-    for (let at = index.text.indexOf(text); at !== -1; at = index.text.indexOf(text, at + 1)) {
-      if ((at === 0 || /\s/u.test(index.text[at - 1])) &&
-          (at + text.length === index.text.length || /\s/u.test(index.text[at + text.length]))) {
-        found.push({ start: at, end: at + text.length, score: 1 });
-        if (found.length > 32) { return []; } // Repetitive context is not identifying evidence.
+    const strong = distinctive(text);
+    const needle = strong ? text : text.replace(/[.!?。！？]+["'”’)}\]]*$/u, '').trim();
+    const atBoundary = (at: number) => at < 0 || at >= index.text.length ||
+      (strong ? /\s/u : /[\s.!?。！？"'“”‘’()[\]{}]/u).test(index.text[at]);
+    for (let at = index.text.indexOf(needle); at !== -1; at = index.text.indexOf(needle, at + 1)) {
+      if (atBoundary(at - 1) && atBoundary(at + needle.length) &&
+          (title !== undefined || !structural(document[index.lineAt(at)]))) {
+        found.push({ start: at, end: at + needle.length, score: 1 });
+        if (found.length > 32) { ambiguousContext = true; return []; }
       }
     }
+    // Short context is useful in a unique pair, but fuzzy short matches are too weak.
+    if (!strong) { return found; }
     // Compare titles, not shared \section syntax; unrelated short titles must not
     // look similar merely because their command names match.
     const rough = index.sentences.filter(sentence => (title !== undefined) === (sentence.heading !== undefined))
       .map(sentence => ({ ...sentence, score: dice(title ?? text, sentence.heading ?? sentence.text) }))
       .filter(sentence => sentence.score >= 0.65 && !found.some(match => match.start < sentence.end && match.end > sentence.start))
       .sort((a, b) => b.score - a.score);
-    if (rough.length > 64) { return []; }
+    if (rough.length > 64) { ambiguousContext = true; return []; }
     for (const sentence of rough) {
       const score = similarity(title ?? text, sentence.heading ?? sentence.text, budget);
       if (score >= 0.86) { found.push({ start: sentence.start, end: sentence.end, score }); }
     }
     return found;
   };
-  const boundary = endBoundary(document);
   if (useEnd && savedBoundary === 'document-end' && boundary.kind !== 'document-end') { return undefined; }
   const endOffset = boundary.kind === 'document-end' ? index.offsets[boundary.line] : index.text.length;
-  const before = find(saved.before), after = useEnd ? [{ start: endOffset, end: endOffset, score: 1 }] : find(saved.after);
-  if (budget.remaining < 0) { return undefined; }
+  const before = usableContext(saved.before) ? find(saved.before) : [];
+  const after = useEnd ? [{ start: endOffset, end: endOffset, score: 1 }] : usableContext(saved.after) ? find(saved.after) : [];
+  if (budget.remaining < 0 || ambiguousContext) { return undefined; }
+  // An end sentinel alone adds no identity evidence to short preceding text.
+  if (useEnd && !distinctive(saved.before)) { return undefined; }
+  const beforeSpacing = contextSpacing(anchor, 'before', saved.before);
+  const afterSpacing = contextSpacing(anchor, 'after', saved.after);
   const maxGap = Math.min(2000, Math.max(160, normalize(anchor.selected.join(' ')).length * 3 + 80));
   const maxLines = Math.max(8, Math.min(40, anchor.selected.length * 3 + 4));
-  const candidates: { estimatedLine: number; confidence: number; start: number; end: number }[] = [];
+  const candidates: { estimatedLine: number; estimatedRange: { startLine: number; endLine: number }; confidence: number; start: number; end: number }[] = [];
   for (const left of before) {
     for (const right of after) {
       const gap = right.start - left.end;
@@ -371,16 +404,35 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
       const between = document.slice(leftLine + 1, rightLine);
       if (gap < 0 || gap > maxGap || between.filter(line => proseLine(line)).length > maxLines ||
           between.some(line => structural(line) && !(useEnd && emptyTail(line)))) { continue; }
-      candidates.push({ estimatedLine: Math.min(leftLine + 1, rightLine),
+      const startLine = Math.min(leftLine + 1, rightLine);
+      const estimate = beforeSpacing !== undefined ? leftLine + beforeSpacing : afterSpacing !== undefined ?
+        rightLine - afterSpacing - (anchor.selected.length - 1) : startLine;
+      candidates.push({ estimatedLine: Math.max(startLine, Math.min(estimate, rightLine)), estimatedRange: { startLine, endLine: rightLine },
         confidence: (left.score + right.score) / 2 - 0.1 * gap / maxGap, start: left.start, end: right.end });
     }
   }
   candidates.sort((a, b) => b.confidence - a.confidence);
   const best = candidates[0];
-  if (!best || best.confidence < 0.85) { return undefined; }
+  if (!best || best.confidence < 0.85) {
+    // One unique, identifying context can retain a lower-confidence estimate when
+    // the other side is gone. Never override two conflicting or distant matches.
+    const side = before.length === 1 && !after.length ? 'before' : after.length === 1 && !before.length && !useEnd ? 'after' : undefined;
+    if (!side || !distinctive(saved[side])) { return undefined; }
+    const spacing = side === 'before' ? beforeSpacing : afterSpacing;
+    if (spacing === undefined) { return undefined; }
+    const match = (side === 'before' ? before : after)[0];
+    const line = index.lineAt(side === 'before' ? match.end - 1 : match.start);
+    const estimate = side === 'before' ? line + spacing : line - spacing - (anchor.selected.length - 1);
+    const estimatedLine = Math.max(0, Math.min(estimate, document.length - 1));
+    const between = side === 'before' ? document.slice(line + 1, estimatedLine + 1) : document.slice(estimatedLine, line);
+    if (between.some(structural)) { return undefined; }
+    return { kind: 'uncertain', estimatedLine, confidence: match.score * 0.75,
+      reason: `The original passage could not be matched. Only the ${side === 'before' ? 'preceding' : 'following'} context remains; the location is estimated using saved spacing. Review the saved reference before reconnecting.` };
+  }
   const alternative = candidates.find(candidate => candidate.start !== best.start || candidate.end !== best.end);
   if (alternative && best.confidence - alternative.confidence < 0.08) { return undefined; }
-  return { kind: 'uncertain', estimatedLine: best.estimatedLine, confidence: best.confidence,
+  const shortPenalty = (distinctive(saved.before) ? 0 : 0.08) + (useEnd || distinctive(saved.after) ? 0 : 0.08);
+  return { kind: 'uncertain', estimatedLine: best.estimatedLine, estimatedRange: best.estimatedRange, confidence: best.confidence - shortPenalty,
     reason: useEnd ? 'The original passage could not be matched. Its location is estimated from preceding context and the document end; review the saved reference before reconnecting.' :
       'The original passage could not be matched. Its location is estimated from the surrounding context; review the saved reference before reconnecting.' };
 }

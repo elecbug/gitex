@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {

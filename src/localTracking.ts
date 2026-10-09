@@ -41,12 +41,17 @@ export class LocalTracking {
     let location = shared;
     if (local && documentHash(text) !== anchor.documentHash) {
       const recent = locateAnchor(local.anchor, text);
+      const separateEstimates = shared.kind === 'uncertain' && recent.kind === 'uncertain' &&
+        ((shared.estimatedRange?.endLine ?? shared.estimatedLine) < (recent.estimatedRange?.startLine ?? recent.estimatedLine) ||
+         (recent.estimatedRange?.endLine ?? recent.estimatedLine) < (shared.estimatedRange?.startLine ?? shared.estimatedLine));
       if (shared.kind === 'attached' && recent.kind === 'attached' &&
           (shared.endLine < recent.startLine || recent.endLine < shared.startLine) ||
-          shared.kind === 'uncertain' && recent.kind === 'uncertain' && shared.estimatedLine !== recent.estimatedLine) {
+          separateEstimates) {
         location = { kind: 'outdated', reason: 'Shared and local references point to different passages. Review the saved references and reconnect manually.' };
       } else if (shared.kind !== 'attached' && recent.kind !== 'outdated' &&
-          (recent.kind === 'attached' || shared.kind === 'outdated')) {
+          (recent.kind === 'attached' || shared.kind === 'outdated' ||
+           shared.kind === 'uncertain' && recent.kind === 'uncertain' && (recent.confidence > shared.confidence ||
+             recent.confidence === shared.confidence && recent.estimatedLine !== shared.estimatedLine))) {
         location = { ...recent, source: 'local' };
       }
     }

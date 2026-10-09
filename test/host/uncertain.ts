@@ -137,6 +137,25 @@ export async function uncertainTests(app: any, store: ReviewStore): Promise<void
     assert.equal(await followingText.isVisible(), true, 'Following sentence must display unpunctuated prose');
     if (captures) { await view.page().screenshot({ path: path.join(captures, 'review-short-context.png') }); }
 
+    const spaced = ['\\documentclass{article}', '\\usepackage{kotex}', '', '\\begin{document}', '',
+      heading, '', '', '헬로', '', '', '랄랄루', '랄랄라.', '', '\\end{document}'].join('\n');
+    const shortKey = `${store.root}:${shortReview.id}`;
+    await setText(spaced);
+    const shortLocal = structuredClone(app.localTracking.get(shortKey, shortReview.anchorRevision));
+    assert.equal(shortLocal.anchor.sentenceContext.after, '랄랄루 랄랄라.');
+    await setText(spaced.replace('헬로', ''));
+    const estimated = app.getChildren().find((item: any) => item.key === shortKey);
+    assert.equal(estimated.location.kind, 'uncertain'); assert.equal(estimated.location.estimatedLine, 8);
+    assert.match(app.nativeThreads.get(shortKey).label, /Uncertain/);
+    assert.equal(app.nativeThreads.get(shortKey).range.start.line, 8);
+    await until(async () => (await view.locator('#match-state').textContent())!.startsWith('Uncertain'), 'short context estimate in review');
+    assert.equal(await followingText.textContent(), '랄랄루', 'shared saved context is not rewritten');
+    await view.locator('#local-context > summary').click();
+    assert.equal(await view.locator('#local-context pre').last().textContent(), '랄랄루 랄랄라.');
+    assert.deepEqual(app.localTracking.get(shortKey, shortReview.anchorRevision), shortLocal);
+    assert.deepEqual((await store.threads()).find(thread => thread.id === shortReview.id)!.anchor, shortReview.anchor);
+    if (captures) { await view.page().screenshot({ path: path.join(captures, 'review-short-estimated.png') }); }
+
     assert.equal(await store.head(), head); assert.equal(await store.git.text(['write-tree']), index);
     assert.equal(await store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']), remote);
     assert.ok(document.isDirty);

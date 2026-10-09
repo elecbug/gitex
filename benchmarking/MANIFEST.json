@@ -1,0 +1,52 @@
+[
+  {
+    "stem": "01_gettysburg_address",
+    "title": "Gettysburg Address (1863)",
+    "source": "https://www.nps.gov/linc/learn/historyculture/gettysburgaddress.htm",
+    "note": "Bliss copy text as displayed by the National Park Service; paragraph boundaries are for testing.",
+    "txt_lines": 19,
+    "tex_lines": 24,
+    "sections": 1,
+    "sha256_txt": "288352171f887dcd68c8136d3c3e7539b14ce3d3aadc4160de5e8323b1ac2e94"
+  },
+  {
+    "stem": "02_bill_of_rights",
+    "title": "U.S. Bill of Rights (1791)",
+    "source": "https://www.archives.gov/founding-docs/bill-of-rights-transcript",
+    "note": "First ten ratified amendments only; the 1789 proposal also contained two additional proposed articles.",
+    "txt_lines": 52,
+    "tex_lines": 48,
+    "sections": 10,
+    "sha256_txt": "0c497a2b7a5d0e24f01dc875c26172f4ff60d8d99de633fa5fc67c5dcdfb1a38"
+  },
+  {
+    "stem": "03_virginia_declaration",
+    "title": "Virginia Declaration of Rights (1776)",
+    "source": "https://www.archives.gov/founding-docs/virginia-declaration-of-rights",
+    "note": "Text follows National Archives presentation, except no commentary and paragraph breaks adapted for testing.",
+    "txt_lines": 88,
+    "tex_lines": 77,
+    "sections": 17,
+    "sha256_txt": "7f3de6a2daea90a3111353d5ee91660642b41999cb0a5da20d743026cd916f02"
+  },
+  {
+    "stem": "04_declaration_of_independence",
+    "title": "Declaration of Independence (1776)",
+    "source": "https://www.archives.gov/founding-docs/declaration-transcript",
+    "note": "Full main text, without the list of signatories; original spelling follows the National Archives transcription.",
+    "txt_lines": 93,
+    "tex_lines": 96,
+    "sections": 3,
+    "sha256_txt": "f261c4492c8582d662f60f6e12203f854a14e527cda218827e1aebc342392893"
+  },
+  {
+    "stem": "05_french_declaration_1789",
+    "title": "Déclaration des droits de l’homme et du citoyen (1789)",
+    "source": "https://www.legifrance.gouv.fr/loda/id/JORFTEXT000000697056/",
+    "note": "Original French text from official French government legal portal, not a modern translation.",
+    "txt_lines": 103,
+    "tex_lines": 91,
+    "sections": 18,
+    "sha256_txt": "fbb4df3b7892c878cc9693466f78c775b699d7065fcec3a8ba72f1fe5a281062"
+  }
+]

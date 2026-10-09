@@ -104,3 +104,23 @@ test('old empty sentence context gains unpunctuated local context without rewrit
   assert.equal(tracker.get(key, revision)!.anchor.sentenceContext!.after, '랄랄루');
   assert.equal(old.sentenceContext.after, '');
 });
+
+test('overlapping shared and local estimates keep the recent position without promoting it', () => {
+  const original = '\\section*{작은 생각}\n\n헬로\n\n랄랄루';
+  const shared = createAnchor('main.tex', original, 2, 2, null);
+  const tracker = new LocalTracking();
+  tracker.locate(key, shared, revision, original);
+  const edited = original.replace('헬로', '\n\n헬로');
+  assert.equal(tracker.locate(key, shared, revision, edited).kind, 'attached');
+  const recent = structuredClone(tracker.get(key, revision));
+  const deleted = edited.replace('헬로', '');
+  const sharedLocation = locateAnchor(shared, deleted);
+  const localLocation = tracker.locate(key, shared, revision, deleted);
+  assert.equal(sharedLocation.kind, 'uncertain');
+  assert.equal(localLocation.kind, 'uncertain'); assert.equal(localLocation.source, 'local');
+  if (sharedLocation.kind === 'uncertain' && localLocation.kind === 'uncertain') {
+    assert.equal(sharedLocation.estimatedLine, 2); assert.equal(localLocation.estimatedLine, 4);
+  }
+  assert.deepEqual(tracker.get(key, revision), recent, 'an estimate must never replace the last attached local context');
+  assert.deepEqual(shared.selected, ['헬로']);
+});

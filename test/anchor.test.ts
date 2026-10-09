@@ -9,11 +9,11 @@ test('inserting paragraphs preserves a multi-line comment, including CRLF docume
     { kind: 'attached', startLine: 3, endLine: 4 });
 });
 
-test('an unrelated replacement or deleted passage retains an outdated comment', () => {
+test('unique short context estimates an unrelated replacement without claiming attachment', () => {
   const original = 'Introduction\nA result.\nConclusion\n';
   const anchor = createAnchor('main.tex', original, 1, 1, null);
-  assert.equal(locateAnchor(anchor, 'Introduction\nAnother result.\nConclusion\n').kind, 'outdated');
-  assert.equal(locateAnchor(anchor, 'Introduction\nConclusion\n').kind, 'outdated');
+  assert.equal(locateAnchor(anchor, 'Introduction\nAnother result.\nConclusion\n').kind, 'uncertain');
+  assert.equal(locateAnchor(anchor, 'Introduction\nConclusion\n').kind, 'uncertain');
 });
 
 test('small edits keep a shifted passage attached using text and surrounding context', () => {
@@ -66,7 +66,7 @@ test('surrounding context disambiguates similar passages in different sections',
 test('text order and a minimum text similarity prevent attachment to unrelated passages', () => {
   const anchor = createAnchor('main.tex', 'Before\nThe method increases precision while reducing latency.\nAfter', 1, 1, null);
   for (const body of ['We discuss a completely separate observation.', 'latency. reducing while precision increases method The', '']) {
-    assert.equal(locateAnchor(anchor, `Before\n${body}\nAfter`).kind, 'outdated');
+    assert.equal(locateAnchor(anchor, `Before\n${body}\nAfter`).kind, 'uncertain');
   }
 });
 
@@ -160,10 +160,10 @@ test('complete sentence evidence follows passages when context is rewrapped beyo
   assert.equal(removed.kind, 'uncertain');
 });
 
-test('missing, reversed, distant, repetitive or structural context cannot produce estimates', () => {
+test('reversed, distant, repetitive or structural context cannot produce estimates', () => {
   const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
   for (const changed of [
-    preceding, following, `${following}\n${preceding}`,
+    `${following}\n${preceding}`,
     `${preceding}\n${'Unrelated discussion.\n'.repeat(20)}${following}`,
     `${preceding}\n${following}\n\n${preceding}\n${following}`,
     `${preceding}\n\\section{Different section}\n${following}`,
@@ -226,7 +226,59 @@ test('unterminated context is accepted at real boundaries but not when clipped b
   }
   assert.equal(createAnchor('main.tex', [target, ...wrapped, 'Still the same paragraph'].join('\n'), 0, 0, null).sentenceContext!.after, '');
   const short = createAnchor('main.tex', `${koreanHeading}\n헬로\n랄랄루`, 1, 1, null);
-  assert.equal(locateAnchor(short, `${koreanHeading}\n랄랄루`).kind, 'outdated', 'saving short context must not relax the evidence needed for an estimate');
+  assert.equal(locateAnchor(short, `${koreanHeading}\n랄랄루`).kind, 'uncertain', 'a unique short context pair is enough for an estimate, not attachment');
+});
+
+test('deleted Korean text retains its estimated position between a heading and short wrapped prose', () => {
+  const original = ['\\documentclass{article}', '\\usepackage{kotex}', '', '\\begin{document}', '',
+    koreanHeading, '', '', '헬로', '', '', '랄랄루', '랄랄라.', '', '\\end{document}'].join('\n');
+  const anchor = createAnchor('main.tex', original, 8, 8, null);
+  assert.deepEqual(anchor.sentenceContext, { before: koreanHeading, after: '랄랄루 랄랄라.' });
+  const snapshot = structuredClone(anchor);
+  for (const updated of [original.replace('헬로', ''), original.replace('헬로', '').replace('랄랄루\n랄랄라.', '랄랄루 랄랄라.')]) {
+    const location = locateAnchor(anchor, updated);
+    assert.equal(location.kind, 'uncertain');
+    if (location.kind === 'uncertain') { assert.equal(location.estimatedLine, 8); assert.deepEqual(location.estimatedRange, { startLine: 6, endLine: 11 }); }
+  }
+  assert.deepEqual(anchor, snapshot);
+});
+
+test('short saved context still matches when its following sentence is extended or punctuated', () => {
+  const original = `${koreanHeading}\n헬로\n랄랄루`;
+  const anchor = createAnchor('main.tex', original, 1, 1, null);
+  for (const tail of ['랄랄루\n랄랄라.', '랄랄루.', '랄랄루 랄랄라.']) {
+    assert.equal(locateAnchor(anchor, `${koreanHeading}\n\n${tail}`).kind, 'uncertain');
+  }
+  const punctuated = createAnchor('main.tex', `${original}.`, 1, 1, null);
+  assert.equal(locateAnchor(punctuated, `${koreanHeading}\n랄랄루`).kind, 'uncertain');
+});
+
+test('one unique identifying side yields a lower-confidence estimate using saved spacing', () => {
+  const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
+  for (const [remaining, side] of [[preceding, 'preceding'], [following, 'following']]) {
+    const location = locateAnchor(anchor, remaining);
+    assert.equal(location.kind, 'uncertain');
+    if (location.kind === 'uncertain') { assert.ok(location.confidence < 0.85); assert.equal(location.estimatedLine, 0); assert.ok(location.reason.includes(side)); }
+    assert.equal(locateAnchor(anchor, `${remaining}\n\n${remaining}`).kind, 'outdated', 'one repeated side does not identify a location');
+  }
+  const short = createAnchor('main.tex', `${koreanHeading}\n헬로\n랄랄루`, 1, 1, null);
+  assert.equal(locateAnchor(short, '랄랄루').kind, 'outdated', 'a short fragment alone is insufficient');
+  assert.equal(locateAnchor(anchor, `${preceding}\n\\section{New scope}`).kind, 'outdated', 'a one-sided estimate must not cross into another section');
+});
+
+test('short contexts require an unambiguous ordered pair and ignore inactive or structural text', () => {
+  const original = `${koreanHeading}\n헬로\n랄랄루`;
+  const anchor = createAnchor('main.tex', original, 1, 1, null);
+  for (const document of [
+    `${koreanHeading}\n랄랄루\n\n${koreanHeading}\n랄랄루`,
+    `${koreanHeading}\n${'랄랄루\n'.repeat(40)}`,
+    `랄랄루\n${koreanHeading}`,
+    `${koreanHeading}\n${'Unrelated discussion.\n'.repeat(20)}랄랄루`
+  ]) { assert.equal(locateAnchor(anchor, document).kind, 'outdated'); }
+  const missingHeading = `\\section{다른 제목}\n\\label{랄랄루}\n\\end{document}\n${koreanHeading}\n랄랄루`;
+  assert.equal(locateAnchor(anchor, missingHeading).kind, 'outdated');
+  const structure = createAnchor('main.tex', '\\end{figure}\n헬로\n\\begin{figure}', 1, 1, null);
+  assert.equal(locateAnchor(structure, '\\end{figure}\n\\begin{figure}').kind, 'outdated');
 });
 
 test('named LaTeX headings and the next nonblank paragraph provide context for the reported Korean example', () => {
@@ -261,7 +313,7 @@ test('heading matching uses title identity instead of shared command syntax', ()
   assert.equal(locateAnchor(anchor, `\\section*{다른 이야기}\n\n${nextParagraph}`).kind, 'outdated');
   const duplicate = `${koreanHeading}\n\n${nextParagraph}\n`;
   assert.equal(locateAnchor(anchor, duplicate.repeat(2)).kind, 'outdated');
-  assert.equal(locateAnchor(anchor, koreanHeading).kind, 'outdated', 'a heading alone cannot estimate a deleted passage');
+  assert.equal(locateAnchor(anchor, koreanHeading).kind, 'uncertain', 'a unique saved heading can provide a lower-confidence estimate');
 });
 
 test('empty sentence fields from 0.8.0 recover available heading context without rewriting history', () => {
