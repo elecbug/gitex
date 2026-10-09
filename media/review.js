@@ -100,6 +100,10 @@
     const surroundings = element('details', undefined, passage, 'surroundings');
     const surroundingsLabel = element('summary', 'Surrounding sentences', surroundings);
     const surroundingsBody = element('div', undefined, surroundings);
+    const localContext = element('details', undefined, contextCard, 'local-context surroundings');
+    localContext.id = 'local-context';
+    const localSummary = element('summary', 'Local context', localContext);
+    const localBody = element('div', undefined, localContext);
     const tools = element('div', undefined, contextCard, 'thread-tools');
     const source = button('Open source', tools, 'secondary', 'source'); source.id = 'source';
     const move = button('Move to editor selection', tools, 'quiet', 'move');
@@ -131,7 +135,7 @@
     const trackingLabel = element('span', 'Tracking history', trackingSummary);
     const trackingEntries = element('div', undefined, tracking, 'revision-list');
     const view = { key, root, repository, location, match, lines, contextNote, excerpt, passage, passageSummary, source,
-      surroundings, surroundingsLabel, surroundingsBody,
+      surroundings, surroundingsLabel, surroundingsBody, localContext, localSummary, localBody,
       count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), error: '',
       trackingLabel, trackingEntries, trackingSignature: '', scroll: 0 };
     source.onclick = () => vscode.postMessage({ type: 'source', key: view.key });
@@ -201,7 +205,9 @@
     const saved = anchor.sentenceContext || { before: anchor.before.join('\n'), after: anchor.after.join('\n') };
     for (const [side, label] of [['before', 'Preceding sentence'], ['after', 'Following sentence']]) {
       element('p', anchor.sentenceContext ? label : (side === 'before' ? 'Preceding lines' : 'Following lines'), parent, 'reference-label');
-      element('pre', saved[side] || '(Not available in this saved reference)', parent);
+      const boundary = side === 'after' && anchor.afterBoundary;
+      element('pre', boundary ? (boundary === 'document-end' ? 'End of document (\\end{document})' : 'End of file') :
+        saved[side] || '(Not available in this saved reference)', parent);
     }
   }
   function renderContext(view, review, context) {
@@ -214,6 +220,7 @@
       (attached ? '' : 'Saved reference · ') + range(attached ? context.location : review.anchor);
     view.match.textContent = uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
       'Similar text · ' + Math.round(context.location.similarity * 100) + '%';
+    if (context.location.source === 'local') view.match.textContent += ' · Local context';
     view.match.dataset.tone = uncertain ? 'uncertain' : !attached ? 'warning' : 'accent';
     view.contextNote.hidden = attached;
     view.contextNote.textContent = attached ? '' : context.location.reason + ' Select source lines and use Move to editor selection to reattach.';
@@ -224,6 +231,15 @@
     view.surroundingsLabel.textContent = review.anchor.sentenceContext ? 'Surrounding sentences' : 'Saved line context (legacy)';
     view.surroundingsBody.replaceChildren();
     renderSurroundings(view.surroundingsBody, review.anchor);
+    view.localContext.hidden = !context.localReference;
+    view.localBody.replaceChildren();
+    if (context.localReference) {
+      view.localSummary.textContent = 'Local context · ' + new Date(context.localReference.updatedAt).toLocaleString();
+      element('p', 'Last reliable match in this working copy. Updated as you edit; kept separate from shared review history.', view.localBody, 'reference-label');
+      element('p', range(context.localReference.anchor), view.localBody, 'reference-label');
+      element('pre', context.localReference.anchor.selected.join('\n'), view.localBody);
+      renderSurroundings(view.localBody, context.localReference.anchor);
+    }
     view.source.querySelector('.button-label').textContent = uncertain ? 'Open estimated location' : attached ? 'Open source' : 'Open saved excerpt';
     view.count.textContent = review.comments.length + (review.comments.length === 1 ? ' comment' : ' comments');
     view.syncInfo.dataset.state = context.sync;

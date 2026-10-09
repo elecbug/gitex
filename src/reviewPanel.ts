@@ -2,10 +2,12 @@ import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
 import { ReviewThread } from './model';
 import { Location } from './anchor';
+import { LocalReference } from './localTracking';
 
 export interface ReviewContext {
   repository: string;
   location: Location;
+  localReference?: LocalReference;
   sync: 'automatic' | 'manual' | 'failed';
   status: string;
 }

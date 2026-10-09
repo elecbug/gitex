@@ -34,6 +34,23 @@ export function validPath(value: unknown): value is string {
 }
 function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every(line => typeof line === 'string' && !line.includes('\n')); }
 
+export function validAnchor(value: unknown): value is Anchor {
+  if (!value || typeof value !== 'object') { return false; }
+  const a = value as Anchor;
+  if (!validPath(a.path) ||
+      !(a.baseCommit === null || (typeof a.baseCommit === 'string' && objectId.test(a.baseCommit))) ||
+      typeof a.documentHash !== 'string' || !/^[a-f0-9]{64}$/.test(a.documentHash) ||
+      !Number.isSafeInteger(a.startLine) || a.startLine < 0 || !Number.isSafeInteger(a.endLine) || a.endLine < a.startLine ||
+      !strings(a.selected) || a.selected.length !== a.endLine - a.startLine + 1 || !a.selected.some(line => line.trim()) ||
+      !strings(a.before) || a.before.length > 3 || !strings(a.after) || a.after.length > 3 ||
+      !Number.isSafeInteger(a.occurrences) || a.occurrences < 1 ||
+      (a.afterBoundary !== undefined && a.afterBoundary !== 'document-end' && a.afterBoundary !== 'file-end')) { return false; }
+  return a.sentenceContext === undefined || (!!a.sentenceContext && !Array.isArray(a.sentenceContext) &&
+    typeof a.sentenceContext === 'object' && (['before', 'after'] as const).every(side =>
+      typeof a.sentenceContext![side] === 'string' && a.sentenceContext![side].length <= MAX_CONTEXT_LENGTH &&
+      !/[\r\n\0]/u.test(a.sentenceContext![side])));
+}
+
 export function parseEvent(text: string): ReviewEvent {
   const e = JSON.parse(text);
   const bad = () => { throw new Error('Invalid GiTex review data. No remote data has been overwritten.'); };
@@ -45,18 +62,7 @@ export function parseEvent(text: string): ReviewEvent {
   }
   if (e.type === 'create' && e.threadId !== e.id) { return bad(); }
   if (e.type === 'create' || e.type === 'move' || ((e.type === 'edit' || e.type === 'reply') && e.anchor !== undefined)) {
-    const a = e.anchor;
-    if (!a || !validPath(a.path) ||
-        !(a.baseCommit === null || (typeof a.baseCommit === 'string' && objectId.test(a.baseCommit))) ||
-        typeof a.documentHash !== 'string' || !/^[a-f0-9]{64}$/.test(a.documentHash) ||
-        !Number.isSafeInteger(a.startLine) || a.startLine < 0 || !Number.isSafeInteger(a.endLine) || a.endLine < a.startLine ||
-        !strings(a.selected) || a.selected.length !== a.endLine - a.startLine + 1 || !a.selected.some((line: string) => line.trim()) ||
-        !strings(a.before) || a.before.length > 3 || !strings(a.after) || a.after.length > 3 ||
-        !Number.isSafeInteger(a.occurrences) || a.occurrences < 1) { return bad(); }
-    if (a.sentenceContext !== undefined && (!a.sentenceContext || Array.isArray(a.sentenceContext) ||
-        typeof a.sentenceContext !== 'object' || !['before', 'after'].every(side =>
-          typeof a.sentenceContext[side] === 'string' && a.sentenceContext[side].length <= MAX_CONTEXT_LENGTH &&
-          !/[\r\n\0]/u.test(a.sentenceContext[side])))) { return bad(); }
+    if (!validAnchor(e.anchor)) { return bad(); }
   }
   if ((e.type === 'edit' || e.type === 'reply') && e.anchorBasedOn !== undefined && (!e.anchor || !uuid.test(e.anchorBasedOn))) { return bad(); }
   if (e.type === 'state') {

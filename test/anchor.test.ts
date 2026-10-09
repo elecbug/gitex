@@ -269,3 +269,40 @@ test('escaped percent signs survive while comments after LaTeX line breaks are e
   assert.equal(anchor.sentenceContext!.before, before);
   assert.equal(anchor.sentenceContext!.after, 'Further measurements confirm the observed result.');
 });
+
+test('document-end context is recorded before end document, excluding inactive trailing text', () => {
+  const original = `${preceding}\n${target}\n\n\\end{document}\nIgnored text after the document.`;
+  const anchor = createAnchor('main.tex', original, 1, 1, null);
+  assert.equal(anchor.afterBoundary, 'document-end');
+  assert.equal(anchor.sentenceContext!.after, '');
+  const location = locateAnchor(anchor, original.replace(target + '\n', ''));
+  assert.equal(location.kind, 'uncertain');
+  if (location.kind === 'uncertain') { assert.equal(location.estimatedLine, 1); assert.match(location.reason, /document end/); }
+  assert.equal(locateAnchor(anchor, `${preceding}\n\n\\end{document}\n${target}`).kind, 'uncertain', 'an inactive copy beyond the saved end boundary cannot steal the comment');
+});
+
+test('file-end context supports files with and without a final newline', () => {
+  for (const ending of ['', '\n', '\n\n% A trailing comment']) {
+    const original = `${preceding}\n${target}${ending}`;
+    const anchor = createAnchor('main.tex', original, 1, 1, null);
+    assert.equal(anchor.afterBoundary, 'file-end');
+    assert.equal(locateAnchor(anchor, `${preceding}${ending}`).kind, 'uncertain');
+  }
+});
+
+test('end boundaries need identifying preceding context and a bounded gap', () => {
+  const original = `${koreanHeading}\n${koreanParagraph}\n\\end{document}`;
+  const anchor = createAnchor('main.tex', original, 1, 1, null);
+  assert.equal(locateAnchor(anchor, `${koreanHeading}\n\\end{document}`).kind, 'uncertain');
+  assert.equal(locateAnchor(anchor, `${koreanHeading}\n`).kind, 'outdated', 'a missing saved end-document marker is not silently replaced');
+  assert.equal(locateAnchor(anchor, `${koreanHeading}\n${'Unrelated prose remains here.\n'.repeat(40)}\\end{document}`).kind, 'outdated');
+  assert.equal(locateAnchor(createAnchor('main.tex', `${target}\n\\end{document}`, 0, 0, null), '\\end{document}').kind, 'outdated');
+});
+
+test('legacy end-document context works without rewriting the original anchor', () => {
+  const original = `${preceding}\n${target}\n\\end{document}`;
+  const { afterBoundary, ...legacy } = createAnchor('main.tex', original, 1, 1, null);
+  const before = structuredClone(legacy);
+  assert.equal(locateAnchor(legacy, `${preceding}\n\\end{document}`).kind, 'uncertain');
+  assert.deepEqual(legacy, before);
+});

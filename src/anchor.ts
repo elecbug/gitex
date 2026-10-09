@@ -12,16 +12,17 @@ export interface Anchor {
   occurrences: number;
   // Optional so immutable anchors written by older clients remain valid.
   sentenceContext?: { before: string; after: string };
+  afterBoundary?: 'document-end' | 'file-end';
 }
 
-export type Location = { kind: 'attached'; startLine: number; endLine: number; similarity?: number } |
+export type Location = ({ kind: 'attached'; startLine: number; endLine: number; similarity?: number } |
   { kind: 'uncertain'; estimatedLine: number; confidence: number; reason: string } |
-  { kind: 'outdated'; reason: string };
+  { kind: 'outdated'; reason: string }) & { source?: 'local' };
 
 export const MAX_CONTEXT_LENGTH = 4096;
 
 function lines(text: string): string[] { return text.replace(/\r\n/g, '\n').split('\n'); }
-function hash(text: string): string { return createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex'); }
+export function documentHash(text: string): string { return createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex'); }
 
 function matches(document: string[], selected: string[]): number[] {
   const result: number[] = [];
@@ -36,10 +37,13 @@ export function createAnchor(path: string, text: string, startLine: number, endL
   if (startLine < 0 || endLine < startLine || endLine >= document.length) { throw new Error('Invalid comment line range.'); }
   const selected = document.slice(startLine, endLine + 1);
   if (!selected.some(line => line.trim())) { throw new Error('Select at least one non-empty line.'); }
-  return { path, baseCommit, documentHash: hash(text), startLine, endLine, selected,
+  const boundary = endBoundary(document);
+  const afterBoundary = endLine <= boundary.line && document.slice(endLine + 1, boundary.line).every(emptyTail) &&
+    (endLine === boundary.line || boundary.kind === 'document-end' || emptyTail(document[boundary.line])) ? boundary.kind : undefined;
+  return { path, baseCommit, documentHash: documentHash(text), startLine, endLine, selected,
     before: document.slice(Math.max(0, startLine - 3), startLine),
     after: document.slice(endLine + 1, endLine + 4), occurrences: matches(document, selected).length,
-    sentenceContext: surroundingSentences(document, startLine, endLine) };
+    sentenceContext: surroundingSentences(document, startLine, endLine), ...(afterBoundary ? { afterBoundary } : {}) };
 }
 
 export function locateAnchor(anchor: Anchor, text: string): Location {
@@ -48,8 +52,11 @@ export function locateAnchor(anchor: Anchor, text: string): Location {
 }
 
 function locateText(anchor: Anchor, text: string): Location {
-  if (hash(text) === anchor.documentHash) { return { kind: 'attached', startLine: anchor.startLine, endLine: anchor.endLine }; }
-  const document = lines(text);
+  if (documentHash(text) === anchor.documentHash) { return { kind: 'attached', startLine: anchor.startLine, endLine: anchor.endLine }; }
+  const full = lines(text);
+  const boundary = endBoundary(full);
+  const document = (anchor.afterBoundary === 'document-end' || endBoundary(anchor.after).kind === 'document-end') && boundary.kind === 'document-end'
+    ? full.slice(0, boundary.line + 1) : full;
   const candidates = matches(document, anchor.selected).map(start => {
     let score = 0;
     for (let i = 1; i <= anchor.before.length; i++) {
@@ -198,6 +205,15 @@ function proseLine(line: string): string {
   return normalize(line);
 }
 
+function endBoundary(document: string[]): { kind: 'document-end' | 'file-end'; line: number } {
+  const line = document.findIndex(line => /^\\end\s*\{\s*document\s*\}\s*$/u.test(proseLine(line)));
+  return line < 0 ? { kind: 'file-end', line: document.length - 1 } : { kind: 'document-end', line };
+}
+function emptyTail(line: string): boolean {
+  const text = proseLine(line);
+  return !text || /^\\(?:end|label)\s*\{[^{}]*\}\s*$/u.test(text);
+}
+
 /** A named heading is useful context; the command name alone is not evidence. */
 function headingTitle(text: string): string | undefined {
   const command = /^\\(?:(?:sub){0,2}section|(?:sub)?paragraph|chapter|part)\*?\s*/u.exec(text);
@@ -260,7 +276,7 @@ function sentenceIndex(document: string[]) {
       }
     }
   }
-  return { text, sentences, lineAt };
+  return { text, sentences, lineAt, offsets };
 }
 
 function surroundingSentences(document: string[], start: number, end: number): { before: string; after: string } {
@@ -273,7 +289,8 @@ function surroundingSentences(document: string[], start: number, end: number): {
     /[.!?。！？]["'”’)}\]]*$/u.test(proseLine(document[first - 1]));
   const before = sentenceIndex(previous).sentences.filter(sentence => complete(sentence) &&
     (boundary || sentence.startLine > 0 || sentence.heading !== undefined)).at(-1);
-  const after = sentenceIndex(document.slice(end + 1, end + 65)).sentences.find(complete);
+  const tail = endBoundary(document);
+  const after = sentenceIndex(document.slice(end + 1, Math.min(end + 65, tail.kind === 'document-end' ? tail.line : document.length))).sentences.find(complete);
   return { before: before?.text ?? '', after: after?.text ?? '' };
 }
 
@@ -299,11 +316,13 @@ function distinctive(text: string): boolean {
 function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
   // Older anchors use their actual saved lines, never context invented from today's document.
   const legacy = surroundingSentences([...anchor.before, '', ...anchor.after], anchor.before.length, anchor.before.length);
+  const savedBoundary = anchor.afterBoundary ?? (endBoundary(anchor.after).kind === 'document-end' ? 'document-end' : undefined);
   const saved = {
     before: anchor.sentenceContext?.before || legacy.before || normalize(anchor.before.filter(line => !structural(line)).map(proseLine).join(' ')),
-    after: anchor.sentenceContext?.after || legacy.after || normalize(anchor.after.filter(line => !structural(line)).map(proseLine).join(' '))
+    after: anchor.sentenceContext?.after || (savedBoundary ? '' : legacy.after || normalize(anchor.after.filter(line => !structural(line)).map(proseLine).join(' ')))
   };
-  if (!distinctive(saved.before) || !distinctive(saved.after) || saved.before === saved.after ||
+  const useEnd = !!savedBoundary && !saved.after;
+  if (!distinctive(saved.before) || (!useEnd && !distinctive(saved.after)) || saved.before === saved.after ||
       (headingTitle(saved.before) !== undefined && headingTitle(saved.after) !== undefined) ||
       saved.before.length > MAX_CONTEXT_LENGTH || saved.after.length > MAX_CONTEXT_LENGTH) { return undefined; }
   const index = sentenceIndex(document);
@@ -332,7 +351,10 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
     }
     return found;
   };
-  const before = find(saved.before), after = find(saved.after);
+  const boundary = endBoundary(document);
+  if (useEnd && savedBoundary === 'document-end' && boundary.kind !== 'document-end') { return undefined; }
+  const endOffset = boundary.kind === 'document-end' ? index.offsets[boundary.line] : index.text.length;
+  const before = find(saved.before), after = useEnd ? [{ start: endOffset, end: endOffset, score: 1 }] : find(saved.after);
   if (budget.remaining < 0) { return undefined; }
   const maxGap = Math.min(2000, Math.max(160, normalize(anchor.selected.join(' ')).length * 3 + 80));
   const maxLines = Math.max(8, Math.min(40, anchor.selected.length * 3 + 4));
@@ -343,7 +365,7 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
       const leftLine = index.lineAt(left.end - 1), rightLine = index.lineAt(right.start);
       const between = document.slice(leftLine + 1, rightLine);
       if (gap < 0 || gap > maxGap || between.filter(line => proseLine(line)).length > maxLines ||
-          between.some(structural)) { continue; }
+          between.some(line => structural(line) && !(useEnd && emptyTail(line)))) { continue; }
       candidates.push({ estimatedLine: Math.min(leftLine + 1, rightLine),
         confidence: (left.score + right.score) / 2 - 0.1 * gap / maxGap, start: left.start, end: right.end });
     }
@@ -354,5 +376,6 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
   const alternative = candidates.find(candidate => candidate.start !== best.start || candidate.end !== best.end);
   if (alternative && best.confidence - alternative.confidence < 0.08) { return undefined; }
   return { kind: 'uncertain', estimatedLine: best.estimatedLine, confidence: best.confidence,
-    reason: 'The original passage could not be matched. Its location is estimated from the surrounding context; review the saved reference before reconnecting.' };
+    reason: useEnd ? 'The original passage could not be matched. Its location is estimated from preceding context and the document end; review the saved reference before reconnecting.' :
+      'The original passage could not be matched. Its location is estimated from the surrounding context; review the saved reference before reconnecting.' };
 }

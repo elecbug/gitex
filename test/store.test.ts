@@ -159,6 +159,12 @@ test('sentence context is optional and validated without changing the event vers
   for (const sentenceContext of [null, [], 'text', {}, { before: 3, after: '' }, { before: 'a\nb', after: '' }, { before: '', after: 'x'.repeat(4097) }]) {
     assert.throws(() => parseEvent(JSON.stringify({ ...event, anchor: { ...anchor, sentenceContext } })), /Invalid GiTex/);
   }
+  for (const afterBoundary of [undefined, 'document-end', 'file-end']) {
+    assert.equal(parseEvent(JSON.stringify({ ...event, anchor: { ...anchor, afterBoundary } })).version, 1);
+  }
+  for (const afterBoundary of [null, true, 'unknown', {}]) {
+    assert.throws(() => parseEvent(JSON.stringify({ ...event, anchor: { ...anchor, afterBoundary } })), /Invalid GiTex/);
+  }
 });
 
 test('legacy and sentence anchors coexist, sync, and upgrade on explicit saves with original history intact', async t => {
