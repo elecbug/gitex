@@ -6,14 +6,6 @@
   const nodes = new Map();
   const pending = new Map();
   let sequence = 0;
-  let interactionQueued = false;
-  function interact() {
-    if (interactionQueued) return;
-    interactionQueued = true;
-    queueMicrotask(() => { interactionQueued = false; vscode.postMessage({ type: 'interaction' }); });
-  }
-  document.addEventListener('click', interact);
-  document.addEventListener('focusin', interact);
   function element(tag, text, parent) {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -43,7 +35,7 @@
     const textarea = element('textarea', undefined, form);
     textarea.rows = 4; textarea.required = true; textarea.maxLength = 100000;
     textarea.id = `edit-${comment.id}`; label.htmlFor = textarea.id;
-    const save = element('button', 'Save edit locally', form);
+    const save = element('button', 'Save edit', form);
     save.type = 'submit';
     const cancel = element('button', 'Cancel', form);
     cancel.type = 'button';

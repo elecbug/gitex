@@ -6,24 +6,25 @@ A VS Code extension for sharing line comments on LaTeX papers through Git. Use i
 
 ## Features
 
-- Open or clone a Git repository and select or add a remote for sharing comments.
+- Open or clone a Git repository, or apply one directly to the current folder when no existing paths conflict.
+- Select or add a remote for sharing comments.
 - Comment on one or more lines in `.tex`, `.bib`, `.sty`, `.cls`, and `.ltx` files.
 - Reply to comments and resolve or reopen threads inside the editor.
 - Edit comments and replies while preserving the original text and every edit in history.
-- Fetch remote comments automatically on interactions with the GiTex Review panel; enabled by default and configurable.
+- Automatically pull and push comments once after creating a comment, replying, or saving an edit; enabled by default and configurable.
 - Browse threads in **GiTex Comments** in the Explorer and VS Code's **Comments** panel.
 - Follow the original passage when edits move it to different line numbers.
 - Preserve the original excerpt and mark comments **Outdated** when their passage changes or disappears.
 - Save comments offline and synchronize reviews from multiple users through a central bare repository.
 
-Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Sync Comments** synchronizes and publishes review data; automatic fetching only receives remote reviews. Both leave your working files, current branch, and staging area unchanged.
+Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Sync Comments** and automatic sync after saving both receive and publish review data. They leave your working files, current branch, and staging area unchanged.
 
 ## Installation and usage
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.2.0.vsix`.
-2. Open your local paper repository. To clone a repository, run **GiTex: Clone Repository**.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.3.0.vsix`.
+2. Open your local paper repository. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
    ```sh
@@ -33,7 +34,7 @@ You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaT
 
 4. GiTex uses `origin` by default. Run **GiTex: Connect Repository** to choose another remote or add one.
 5. Select lines in a paper file and press **Ctrl+Shift+/** (**Cmd+Shift+/** on macOS) to enter a comment. With no selection, the comment applies to the current line. You can also use **GiTex: Add Line Comment** in the editor context menu or the comment button in the editor gutter.
-6. Run **GiTex: Sync Comments** or use the sync button in the GiTex Comments panel to share reviews. Collaborators install the same extension and run this command to receive them.
+6. Saving a comment, reply, or edit automatically syncs reviews in the background. Use **GiTex: Fetch Comments** to receive reviews without publishing, or **GiTex: Sync Comments** to receive and publish manually.
 7. Commit and synchronize changes to the paper itself through Source Control.
 
 You can comment on unsaved edits as long as the file already exists on disk. If a collaborator has not received the commented passage yet, its thread appears as Outdated with the original excerpt available. Selections are stored as whole-line ranges.
@@ -50,27 +51,35 @@ If an inline save fails, GiTex opens the review panel with your unsaved draft so
 
 Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. It supports editing, replies, and expandable **History** sections. **Open source / original excerpt** returns to the associated passage. Comment deletion is not provided.
 
-Edits are saved locally as new immutable events. Use **Sync Comments** to publish them. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.2.0.
+Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.3.0.
 
-## Fetch comments on interaction
+## Automatic sync after saving
 
-`gitex.autoPullOnInteraction` defaults to `true`. Opening the GiTex Review panel, focusing it, clicking inside it, expanding a comment or its history, and moving focus between controls fetch remote comments. Inline actions such as edit, save, cancel, history, reply, and resolve/reopen also fetch before proceeding. Overlapping interactions share an in-flight fetch rather than issuing duplicate requests.
+`gitex.autoSyncOnSave` defaults to `true`. A successful new comment, reply, or edit save triggers one background **pull + push** of review data, after the local save is displayed. Opening, clicking, expanding, focusing, viewing history, starting or canceling an edit, and resolving/reopening a thread do not trigger network requests. **Refresh Comments** only reloads local data. There is no polling.
 
-Automatic fetching merges remote reviews into the local review history and **never pushes local comments or edits**. On connection failure, local comments and drafts remain available; the review panel shows a status message and the GiTex Output channel records the error. There is no background polling.
+A sync also publishes previously saved local review events, including resolve/reopen changes. The paper branch, working files, and staging area are unaffected. Concurrent remote edits remain in history; an outdated draft is rejected if a newer revision has already been received locally. Otherwise, edits made before receiving a remote revision are combined as concurrent edits during sync.
 
-Disable it in VS Code Settings under **GiTex: Auto Pull On Interaction**, or add:
+If the network fails, the comment stays saved locally. The review panel and status bar indicate pending synchronization, and GiTex Output records the error. The next successful save or **Sync Comments** can retry.
+
+Disable automatic sync in **GiTex: Auto Sync On Save**, or add:
 
 ```json
 {
-  "gitex.autoPullOnInteraction": false
+  "gitex.autoSyncOnSave": false
 }
 ```
 
-**GiTex: Fetch Comments** remains available for a manual pull, and **GiTex: Sync Comments** fetches and publishes regardless of this setting.
+**GiTex: Fetch Comments** and **GiTex: Sync Comments** remain available regardless of this setting. The old `gitex.autoPullOnInteraction` setting is deprecated: interactions never fetch now. An explicit old `false` value keeps automatic sync disabled until you explicitly set `gitex.autoSyncOnSave`.
 
-**GiTex: Refresh Comments** also fetches when this setting is enabled; with it disabled, Refresh only reloads local data.
+## Apply a repository to the current folder
 
-VS Code's stable Comments API does not expose arbitrary clicks or expand/collapse events from its native inline comment widget. Use the GiTex Review panel for fetching on those interactions. Native inline actions listed above are covered, but simply expanding or clicking the native widget is not an automatic-fetch trigger.
+Open the destination folder, then run **GiTex: Apply Repository to Current Folder** and enter an SSH/HTTPS URL or local bare repository path. In a multi-folder workspace, GiTex uses the active editor's folder or asks you to select one. Relative local paths are resolved from that folder.
+
+GiTex creates `.git` directly in the folder, checks out the remote default branch's latest fetched commit, and configures `origin` and branch tracking. It does not create an extra project subfolder. Afterwards, use Source Control for paper changes and **Fetch Comments** to receive existing reviews.
+
+The remote is checked in a temporary checkout before applying it. Unrelated existing files are retained as local files; shared directories are allowed when their contents do not overlap. Any existing file at an incoming path blocks the operation, even if its contents match. File/directory conflicts, symlink ancestors, an existing `.git`, a folder inside another Git repository, or unsaved editor files also block it. Save or move conflicting content first; this command never merges or overwrites it.
+
+This command currently requires a default paper branch with a commit and regular files. For repositories with symlinks or submodules, use **Clone Repository**. Import requires a filesystem supporting hard links; exclusive file creation prevents overwriting a file created during import. Failed application rolls back its additions while retaining files changed concurrently by the user.
 
 ## Try it with two users
 
@@ -119,7 +128,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.2.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.3.0.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |
@@ -142,11 +151,11 @@ make test-extension
 
 `make test-extension` uses the official test tools to download VS Code 1.90.2 and run the extension with a temporary repository and profile. On Linux CI, provide an X server or use `xvfb-run -a make test-extension`. Use `GITEX_VSCODE_VERSION=stable make test-extension` to run against the current stable release. `make package` downloads the official `vsce` tool and produces a VSIX; it does not publish to the Marketplace.
 
-Core tests cover concurrent pushes and edits, complete edit history, outdated drafts, pull without publishing, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, deleted, or repeated passages. Extension host tests also use Playwright against the test instance's local debugging port to verify actual review-panel clicks, expansion, editing, draft preservation, and the automatic-fetch setting.
+Core tests cover concurrent pushes and edits, complete edit history, outdated drafts, pull without publishing, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, deleted, or repeated passages. Extension host tests also use Playwright against the test instance's local debugging port to verify actual review-panel clicks, expansion, editing, draft preservation, save-only automatic pull/push, disabled settings, and unsaved-file protection during repository import. Repository tests cover path conflicts, concurrent file creation, rollback, and preserving unrelated files.
 
 ## Current scope
 
-- Publishing runs on demand; remote reviews are fetched on supported interactions by default. Live collaborative typing and automatic server notifications are not implemented.
+- Reviews sync automatically after saving by default, or through manual commands. Live collaborative typing and automatic server notifications are not implemented.
 - Comments appear on LaTeX source. PDF annotations, semantic sentence analysis, and LaTeX compilation checks are not implemented.
 - Renamed files produce Outdated comments rather than automatic migration to the new path. Edited passages also require manual review.
 - Comment deletion and fine-grained permissions are not implemented. Users with repository write access can share edits, replies, and thread state changes. Original authorship and the editor of each revision are recorded separately.

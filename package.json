@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -96,6 +96,10 @@
         "title": "GiTex: Clone Repository"
       },
       {
+        "command": "gitex.applyRepository",
+        "title": "GiTex: Apply Repository to Current Folder"
+      },
+      {
         "command": "gitex.connect",
         "title": "GiTex: Connect Repository"
       },
@@ -143,7 +147,7 @@
     "viewsWelcome": [
       {
         "view": "gitex.comments",
-        "contents": "Select lines in a LaTeX file and run [Add Line Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Connect Repository](command:gitex.connect)\nUse Sync Comments to share reviews with collaborators."
+        "contents": "Select lines in a LaTeX file and run [Add Line Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) \u00b7 [Apply to Current Folder](command:gitex.applyRepository) \u00b7 [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
       }
     ],
     "menus": {
@@ -277,7 +281,8 @@
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "description": "Fetch remote comments when interacting with the GiTex Review panel or invoking a comment action. Local edits are not pushed. Native inline expand/click events are unavailable in VS Code's stable API."
+          "description": "Legacy preference retained for compatibility. Interactions no longer fetch comments.",
+          "markdownDeprecationMessage": "Use `#gitex.autoSyncOnSave#`. If that setting is unset, a previous false value keeps automatic synchronization disabled."
         },
         "gitex.remote": {
           "type": "string",
@@ -289,6 +294,12 @@
           "type": "boolean",
           "default": true,
           "description": "Show resolved comment threads."
+        },
+        "gitex.autoSyncOnSave": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Fetch and push comments once in the background after creating a comment, replying, or saving an edit. Opening, clicking, expanding, or canceling comments does not access the remote."
         }
       }
     }

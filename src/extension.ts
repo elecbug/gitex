@@ -6,6 +6,7 @@ import { Git, redact } from './git';
 import { ReviewComment, ReviewThread, validPath } from './model';
 import { ReviewStore } from './store';
 import { ReviewAction, ReviewPanel } from './reviewPanel';
+import { checkImportTarget, importRepository } from './importRepository';
 
 interface Repository { store: ReviewStore; folder: vscode.WorkspaceFolder }
 interface ThreadItem { key: string; repository: Repository; review: ReviewThread; uri: vscode.Uri; location: Location }
@@ -32,8 +33,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private readonly threadItems = new WeakMap<vscode.CommentThread, ThreadItem>();
   private readonly nativeComments = new Map<string, NativeReviewComment>();
   private readonly panels = new Map<string, ReviewPanel>();
-  private readonly pulls = new Map<string, Promise<void>>();
-  private readonly pullErrors = new Map<string, string>();
+  private readonly syncs = new Map<string, Promise<void>>();
+  private readonly syncErrors = new Map<string, string>();
   private readonly excerpts = new Map<string, string>();
   private items: ThreadItem[] = [];
   private timer?: ReturnType<typeof setTimeout>;
@@ -59,6 +60,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.{tex,bib,sty,cls,ltx}');
     context.subscriptions.push(watcher, watcher.onDidChange(() => this.schedule()), watcher.onDidCreate(() => this.schedule()), watcher.onDidDelete(() => this.schedule()));
     this.command('gitex.clone', () => vscode.commands.executeCommand('git.clone'));
+    this.command('gitex.applyRepository', () => this.applyRepository());
     this.command('gitex.connect', () => this.connect());
     this.command('gitex.addComment', (body?: string) => this.addComment(typeof body === 'string' ? body : undefined));
     this.command('gitex.reply', (reply: vscode.CommentReply) => this.reply(reply));
@@ -70,11 +72,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.command('gitex.saveComment', (comment: NativeReviewComment) => this.saveComment(comment));
     this.command('gitex.cancelEdit', (comment: NativeReviewComment) => this.cancelEdit(comment));
     this.command('gitex.commentHistory', (comment: NativeReviewComment) => this.commentHistory(comment));
-    this.command('gitex.refresh', async () => {
-      await this.discover();
-      await Promise.all([...this.repositories.values()].map(repository => this.autoPull(repository)));
-      await this.refresh();
-    });
+    this.command('gitex.refresh', () => this.refresh());
     this.command('gitex.pull', () => this.pull());
     this.command('gitex.sync', () => this.sync());
   }
@@ -129,7 +127,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const current = active && this.repositoryFor(active.document.uri);
     if (current) { return current; }
     const repositories = [...this.repositories.values()];
-    if (!repositories.length) { throw new Error('Open a local Git repository, or run GiTex: Clone Repository first.'); }
+    if (!repositories.length) { throw new Error('Open a local Git repository, or run GiTex: Clone Repository / Apply Repository to Current Folder first.'); }
     if (repositories.length === 1) { return repositories[0]; }
     return (await vscode.window.showQuickPick(repositories.map(repository => ({ label: repository.folder.name, description: repository.store.root, repository })),
       { placeHolder: 'Select a paper repository' }))?.repository;
@@ -188,8 +186,10 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.renderPanels();
     this.changed.fire(undefined);
     const open = next.filter(item => !item.review.resolved).length;
-    this.status.text = `$(comment-discussion) GiTex ${open}`;
-    this.status.tooltip = 'Sync comments with the selected Git remote. Paper commits use Source Control.';
+    const failed = [...this.repositories.keys()].some(root => this.syncErrors.has(root));
+    this.status.text = failed ? '$(warning) GiTex · Sync pending' : `$(comment-discussion) GiTex ${open}`;
+    this.status.tooltip = failed ? 'Comment saved locally; auto sync failed. Click to retry.' :
+      'Sync comments with the selected Git remote. Paper commits use Source Control.';
     if (this.repositories.size) { this.status.show(); } else { this.status.hide(); }
   }
 
@@ -224,12 +224,11 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     if (!repository) { throw new Error('Open this file inside a Git repository workspace.'); }
     // Capture before showing the input box so a changing editor selection cannot retarget the comment.
     const anchor = await this.anchor(repository, editor.document, editor.selection);
-    await this.autoPull(repository);
     body ??= await vscode.window.showInputBox({ prompt: 'Comment on the selected lines', placeHolder: 'Explain this change or leave a review…',
       validateInput: value => !value.trim() ? 'Enter a comment.' : value.length > 100_000 ? 'Comment is too long.' : undefined });
     if (body === undefined) { return; }
     const id = await repository.store.create(anchor, body);
-    await this.refresh();
+    await this.afterSave(repository);
     const native = this.nativeThreads.get(`${repository.store.root}:${id}`);
     if (native) { native.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded; }
   }
@@ -237,32 +236,29 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private async reply(reply: vscode.CommentReply): Promise<void> {
     if (!reply?.thread || !reply.text.trim()) { return; }
     const item = this.threadItems.get(reply.thread);
+    let repository = item?.repository;
     if (item) {
-      await this.autoPull(item.repository);
       await item.repository.store.reply(item.review.id, reply.text);
     }
     else {
-      const repository = this.repositoryFor(reply.thread.uri);
+      repository = this.repositoryFor(reply.thread.uri);
       if (!repository || !reply.thread.range) { throw new Error('Open this comment in its paper repository.'); }
-      await this.autoPull(repository);
       const document = await this.document(reply.thread.uri, repository);
       // Comment API ranges include their last line; unlike selections, column zero does not exclude it.
       const id = await repository.store.create(await this.anchor(repository, document, reply.thread.range, true), reply.text);
       this.nativeThreads.set(`${repository.store.root}:${id}`, reply.thread);
     }
-    await this.refresh();
+    await this.afterSave(repository!);
   }
 
   private async setResolved(target: ThreadItem | vscode.CommentThread, resolved: boolean): Promise<void> {
     const item = target && ('review' in target ? target : this.threadItems.get(target));
     if (!item) { return; }
-    await this.autoPull(item.repository);
     await item.repository.store.setResolved(item.review.id, resolved);
     await this.refresh();
   }
 
-  private async open(item: ThreadItem, fetch = true): Promise<void> {
-    if (fetch) { await this.autoPull(item.repository); }
+  private async open(item: ThreadItem): Promise<void> {
     // Recompute locations before navigation; the user may have edited since this tree item was created.
     await this.refresh();
     item = this.items.find(current => current.key === item.key) ?? item;
@@ -306,7 +302,6 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private async commentTarget(native: NativeReviewComment): Promise<{ item: ThreadItem; comment: ReviewComment }> {
     const item = this.items.find(item => item.key === native.threadKey);
     if (!item) { throw new Error('Open the comment from GiTex Comments again.'); }
-    await this.autoPull(item.repository);
     const review = (await item.repository.store.threads()).find(thread => thread.id === item.review.id);
     const comment = review?.comments.find(comment => comment.id === native.commentId);
     if (!comment) { throw new Error('The comment is unavailable. Refresh comments and try again.'); }
@@ -340,7 +335,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     }
     native.mode = vscode.CommentMode.Preview;
     native.editingRevision = undefined;
-    await this.refresh();
+    await this.afterSave(item.repository);
   }
 
   private async cancelEdit(native: NativeReviewComment): Promise<void> {
@@ -365,32 +360,41 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: true });
   }
 
-  private async autoPull(repository: Repository): Promise<void> {
-    if (this.disposed || !vscode.workspace.getConfiguration('gitex', repository.folder.uri).get('autoPullOnInteraction', true)) { return; }
+  private autoSyncEnabled(repository: Repository): boolean {
+    const config = vscode.workspace.getConfiguration('gitex', repository.folder.uri);
+    const setting = config.inspect<boolean>('autoSyncOnSave');
+    const explicit = setting?.workspaceFolderValue ?? setting?.workspaceValue ?? setting?.globalValue;
+    return explicit ?? config.get<boolean>('autoPullOnInteraction', true);
+  }
+
+  private async afterSave(repository: Repository): Promise<void> {
+    await this.refresh();
+    // A saved comment is immediately usable; network latency must not keep the editor open.
+    if (this.disposed || !this.autoSyncEnabled(repository)) { return; }
     const remote = vscode.workspace.getConfiguration('gitex', repository.folder.uri).get('remote', 'origin');
     const key = `${repository.store.root}:${remote}`;
-    const existing = this.pulls.get(key);
-    if (existing) { return existing; }
-    const operation = (async () => {
+    const previous = this.syncs.get(key) ?? Promise.resolve();
+    const operation = previous.then(async () => {
       try {
-        await repository.store.pull(remote);
-        this.pullErrors.delete(repository.store.root);
+        await repository.store.sync(remote);
+        this.syncErrors.delete(repository.store.root);
         await this.refresh();
       } catch (error) {
         const message = redact(error instanceof Error ? error.message : String(error));
-        this.output.appendLine(`${new Date().toISOString()} Auto fetch: ${message}`);
-        this.pullErrors.set(repository.store.root, 'Remote fetch failed. Showing locally saved comments; your drafts are preserved. See GiTex Output for details.');
-        this.renderPanels();
+        this.output.appendLine(`${new Date().toISOString()} Auto sync: ${message}`);
+        this.syncErrors.set(repository.store.root, 'Auto sync failed. Your comment is saved locally. Use Sync Comments to retry. See GiTex Output for details.');
+        // A fetch may have succeeded before a push failed. Display any received changes too.
+        try { await this.refresh(); } catch { this.renderPanels(); }
+        this.status.text = '$(warning) GiTex · Sync pending';
+        this.status.tooltip = 'Comment saved locally; auto sync failed. Click to retry.';
       }
-    })();
-    this.pulls.set(key, operation);
-    try { await operation; } finally { if (this.pulls.get(key) === operation) { this.pulls.delete(key); } }
+    }).finally(() => { if (this.syncs.get(key) === operation) { this.syncs.delete(key); } });
+    this.syncs.set(key, operation);
   }
 
   private async reviewThread(target: ThreadItem | vscode.CommentThread): Promise<void> {
     const item = target && ('review' in target ? target : this.threadItems.get(target));
     if (!item) { return; }
-    await this.autoPull(item.repository);
     let panel = this.panels.get(item.key);
     if (!panel) {
       panel = new ReviewPanel(this.context.extensionUri, item.key, action => this.panelAction(item, action), () => this.panels.delete(item.key));
@@ -401,11 +405,10 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
 
   private async panelAction(item: ThreadItem, action: ReviewAction): Promise<void> {
     if (action.type === 'ready') { this.renderPanels(); return; }
-    await this.autoPull(item.repository);
     if (action.type === 'edit') { await item.repository.store.edit(item.review.id, action.commentId, action.body, action.basedOn); }
     else if (action.type === 'reply') { await item.repository.store.reply(item.review.id, action.body); }
-    else if (action.type === 'source') { await this.open(item, false); return; }
-    if (action.type !== 'interaction') { await this.refresh(); }
+    else if (action.type === 'source') { await this.open(item); return; }
+    await this.afterSave(item.repository);
   }
 
   private renderPanels(): void {
@@ -413,9 +416,10 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     for (const [key, panel] of this.panels) {
       const item = this.items.find(item => item.key === key);
       if (!item) { continue; }
-      const automatic = vscode.workspace.getConfiguration('gitex', item.repository.folder.uri).get('autoPullOnInteraction', true);
-      const status = (automatic && this.pullErrors.get(item.repository.store.root)) ||
-        `${automatic ? 'Fetch on interaction is enabled.' : 'Fetch on interaction is disabled.'} Edits are saved locally; use Sync Comments to publish them.`;
+      const automatic = this.autoSyncEnabled(item.repository);
+      const status = this.syncErrors.get(item.repository.store.root) ||
+        (automatic ? 'Auto sync after saving is enabled. Saved comments are fetched and pushed in the background.' :
+          'Auto sync after saving is disabled. Edits are saved locally; use Sync Comments to publish them.');
       panel.update(item.review, `${item.review.anchor.path} · ${item.review.resolved ? 'Resolved' : 'Open'}${item.location.kind === 'outdated' ? ' · Outdated' : ''}`, status);
     }
   }
@@ -426,8 +430,32 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const remote = vscode.workspace.getConfiguration('gitex', repository.folder.uri).get('remote', 'origin');
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `GiTex: Fetching comments from ${remote}…` },
       () => repository.store.pull(remote));
-    this.pullErrors.delete(repository.store.root);
     await this.refresh();
+  }
+
+  private async applyRepository(address?: string, folder?: vscode.WorkspaceFolder): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders?.filter(candidate => candidate.uri.scheme === 'file') ?? [];
+    if (!folders.length) { throw new Error('Open a local folder before applying a repository.'); }
+    const active = vscode.window.activeTextEditor?.document.uri;
+    folder ??= active?.scheme === 'file' ? vscode.workspace.getWorkspaceFolder(active) : undefined;
+    folder ??= folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Folder to receive the repository' });
+    if (!folder) { return; }
+    if (folder.uri.scheme !== 'file') { throw new Error('Select a local folder.'); }
+    const root = folder.uri.fsPath;
+    const checkEditors = () => {
+      if (vscode.workspace.textDocuments.some(document => document.isDirty && within(root, document.uri.fsPath))) {
+        throw new Error('Save or revert unsaved files in this folder before applying a repository.');
+      }
+    };
+    checkEditors();
+    await checkImportTarget(root);
+    address ??= await vscode.window.showInputBox({ prompt: `Repository SSH/HTTPS URL or local bare repository path to apply to ${folder.name}`,
+      ignoreFocusOut: true, validateInput: value => !value.trim() || value.trim().startsWith('-') || /[\r\n\0]/.test(value) ? 'Enter a valid Git repository address.' : undefined });
+    if (!address) { return; }
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'GiTex: Checking and applying repository…' },
+      () => importRepository(root, address!, checkEditors));
+    await this.refresh();
+    void vscode.window.showInformationMessage(`Repository applied to ${folder.name}. The default branch and origin are ready. Use Fetch Comments to receive existing reviews.`);
   }
 
   private async connect(): Promise<void> {
@@ -458,6 +486,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const remote = vscode.workspace.getConfiguration('gitex', repository.folder.uri).get('remote', 'origin');
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `GiTex: Syncing comments with ${remote}…` },
       () => repository.store.sync(remote));
+    this.syncErrors.delete(repository.store.root);
     await this.refresh();
     void vscode.window.showInformationMessage('GiTex comments synced. Use Source Control to commit and sync the paper.');
   }
