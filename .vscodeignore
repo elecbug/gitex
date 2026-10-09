@@ -8,5 +8,6 @@ out/**/*.map
 node_modules/**
 tsconfig.json
 package-lock.json
+Makefile
 dist/**
 *.vsix

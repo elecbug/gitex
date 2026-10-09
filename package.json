@@ -2,9 +2,13 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "gitex-local",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/elecbug/gitex.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -38,7 +42,7 @@
     "watch": "tsc -watch -p .",
     "test": "npm run compile && node --test out/test/*.test.js",
     "test:extension": "npm run compile && node out/test/host/run.js",
-    "package": "npx --yes @vscode/vsce@3.6.2 package --no-dependencies --allow-missing-repository --out gitex-0.1.0.vsix",
+    "package": "npx --yes @vscode/vsce@3.6.2 package --no-dependencies --allow-missing-repository",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
@@ -48,6 +52,14 @@
     "typescript": "5.9.3"
   },
   "contributes": {
+    "keybindings": [
+      {
+        "command": "gitex.addComment",
+        "key": "ctrl+shift+/",
+        "mac": "cmd+shift+/",
+        "when": "editorTextFocus && !editorReadonly && resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/i"
+      }
+    ],
     "commands": [
       {
         "command": "gitex.clone",
