@@ -95,3 +95,12 @@ test('local context includes an explicit end boundary and validates persisted re
   const location = tracker.locate(key, anchor, revision, `${recentBefore}\n\\end{document}`);
   assert.equal(location.kind, 'uncertain'); assert.equal(location.source, 'local');
 });
+
+test('old empty sentence context gains unpunctuated local context without rewriting shared history', () => {
+  const text = '\\section*{작은 생각}\n헬로\n랄랄루';
+  const old = { ...createAnchor('main.tex', text, 1, 1, null), sentenceContext: { before: '\\section*{작은 생각}', after: '' } };
+  const tracker = new LocalTracking({ version: 1, entries: [[key, { basedOn: revision, anchor: structuredClone(old), updatedAt: new Date().toISOString() }]] });
+  assert.equal(tracker.locate(key, old, revision, text).kind, 'attached');
+  assert.equal(tracker.get(key, revision)!.anchor.sentenceContext!.after, '랄랄루');
+  assert.equal(old.sentenceContext.after, '');
+});

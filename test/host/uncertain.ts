@@ -124,10 +124,23 @@ export async function uncertainTests(app: any, store: ReviewStore): Promise<void
     assert.ok((await view.locator('.passage .surroundings').textContent())!.includes(following));
     assert.deepEqual((await store.threads()).find(thread => thread.id === latexReview.id)!.anchor, latexReview.anchor);
 
+    await setText(`${heading}\n헬로\n랄랄루`);
+    editor.selection = new vscode.Selection(1, 0, 1, 2);
+    await app.addComment('Capture short Korean context without punctuation');
+    const shortReview = (await store.threads()).find(thread => thread.comments[0].body === 'Capture short Korean context without punctuation')!;
+    assert.deepEqual(shortReview.anchor.sentenceContext, { before: heading, after: '랄랄루' });
+    await app.reviewThread(app.getChildren().find((item: any) => item.review.id === shortReview.id));
+    await until(async () => (await view.locator('.passage-content pre').textContent()) === '헬로', 'short Korean saved reference');
+    await view.locator('.passage .surroundings > summary').click();
+    const followingText = view.locator('.passage .surroundings pre').last();
+    assert.equal(await followingText.textContent(), '랄랄루');
+    assert.equal(await followingText.isVisible(), true, 'Following sentence must display unpunctuated prose');
+    if (captures) { await view.page().screenshot({ path: path.join(captures, 'review-short-context.png') }); }
+
     assert.equal(await store.head(), head); assert.equal(await store.git.text(['write-tree']), index);
     assert.equal(await store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']), remote);
     assert.ok(document.isDirty);
-    console.log('GiTex context tracking: uncertain editor marker, saved sentences, source navigation, no automatic rebasing, resolve, outdated recovery, manual reconnection, LaTeX headings and blank-line context passed.');
+    console.log('GiTex context tracking: uncertain editor marker, saved sentences, source navigation, no automatic rebasing, resolve, outdated recovery, manual reconnection, LaTeX headings, blank-line and unpunctuated Korean context passed.');
   } finally {
     for (const panel of app.panels.values()) { panel.dispose(); }
     await browser.close();

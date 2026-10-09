@@ -284,13 +284,18 @@ function surroundingSentences(document: string[], start: number, end: number): {
   // consume its following context. Never store selected text as its own context.
   const first = Math.max(0, start - 64);
   const previous = document.slice(first, start);
-  const complete = (sentence: Sentence) => sentence.heading !== undefined || /[.!?。！？]["'”’)}\]]*$/u.test(sentence.text);
   const boundary = first === 0 || !proseLine(document[first - 1]) || structural(document[first - 1]) ||
     /[.!?。！？]["'”’)}\]]*$/u.test(proseLine(document[first - 1]));
-  const before = sentenceIndex(previous).sentences.filter(sentence => complete(sentence) &&
-    (boundary || sentence.startLine > 0 || sentence.heading !== undefined)).at(-1);
+  const before = sentenceIndex(previous).sentences.filter(sentence =>
+    boundary || sentence.startLine > 0 || sentence.heading !== undefined).at(-1);
   const tail = endBoundary(document);
-  const after = sentenceIndex(document.slice(end + 1, Math.min(end + 65, tail.kind === 'document-end' ? tail.line : document.length))).sentences.find(complete);
+  const last = Math.min(end + 65, tail.kind === 'document-end' ? tail.line : document.length);
+  const next = document.slice(end + 1, last);
+  const afterBoundary = last === document.length || !proseLine(document[last]) || structural(document[last]);
+  // A paragraph/file boundary also ends useful context, even without punctuation.
+  // Only discard a trailing fragment when the bounded window cuts through prose.
+  const after = sentenceIndex(next).sentences.find(sentence => afterBoundary || sentence.endLine < next.length - 1 ||
+    sentence.heading !== undefined || /[.!?。！？]["'”’)}\]]*$/u.test(sentence.text));
   return { before: before?.text ?? '', after: after?.text ?? '' };
 }
 

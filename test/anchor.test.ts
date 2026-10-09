@@ -197,6 +197,38 @@ const koreanHeading = String.raw`\section*{작은 생각}`;
 const koreanParagraph = '오늘은 바람이 살랑이고, 창밖의 구름은 천천히 흘러간다. 따뜻한 차 한 잔과 함께 잠시 쉬어 가도 좋겠다.';
 const nextParagraph = '다음 날에는 새로운 실험 결과를 자세하게 살펴봅니다.';
 
+test('short prose without punctuation is saved on both sides of the selected lines', () => {
+  for (const ending of ['', '\n', '\n\\end{document}', '\n\nA later sentence.']) {
+    const original = `${koreanHeading}\n헬로\n랄랄루${ending}`;
+    const anchor = createAnchor('main.tex', original, 1, 1, null);
+    assert.deepEqual(anchor.sentenceContext, { before: koreanHeading, after: '랄랄루' });
+    assert.equal(anchor.afterBoundary, undefined, 'existing following text must not be replaced with an end boundary');
+    assert.equal(createAnchor('main.tex', original, 2, 2, null).sentenceContext!.before, '헬로');
+  }
+  assert.deepEqual(createAnchor('main.tex', 'Hello\nSelected\nWorld', 1, 1, null).sentenceContext,
+    { before: 'Hello', after: 'World' });
+});
+
+test('nearby unterminated prose takes priority over distant complete sentences and retains line wrapping', () => {
+  const original = ['An older sentence.', '', '바로 앞 문맥', '', target, '', '% Ignore this.',
+    '바로 뒤', '문맥', '', 'A later sentence.'].join('\r\n');
+  assert.deepEqual(createAnchor('main.tex', original, 4, 4, null).sentenceContext,
+    { before: '바로 앞 문맥', after: '바로 뒤 문맥' });
+  const comment = createAnchor('main.tex', `${target}\n랄랄루 % A comment.\n\\end{document}\nInactive prose.`, 0, 0, null);
+  assert.equal(comment.sentenceContext!.after, '랄랄루');
+});
+
+test('unterminated context is accepted at real boundaries but not when clipped by the search window', () => {
+  const wrapped = Array(64).fill('Wrapped prose');
+  for (const end of ['', '\n', '\n\\end{document}']) {
+    const anchor = createAnchor('main.tex', [target, ...wrapped].join('\n') + end, 0, 0, null);
+    assert.equal(anchor.sentenceContext!.after, wrapped.join(' '));
+  }
+  assert.equal(createAnchor('main.tex', [target, ...wrapped, 'Still the same paragraph'].join('\n'), 0, 0, null).sentenceContext!.after, '');
+  const short = createAnchor('main.tex', `${koreanHeading}\n헬로\n랄랄루`, 1, 1, null);
+  assert.equal(locateAnchor(short, `${koreanHeading}\n랄랄루`).kind, 'outdated', 'saving short context must not relax the evidence needed for an estimate');
+});
+
 test('named LaTeX headings and the next nonblank paragraph provide context for the reported Korean example', () => {
   for (const blanks of [1, 15, 40]) {
     const original = [koreanHeading, koreanParagraph, ...Array(blanks).fill(''), nextParagraph].join('\n');

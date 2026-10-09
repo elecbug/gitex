@@ -53,7 +53,7 @@ Automatic sync runs once after saving a comment, reply, edit, or manual location
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.9.0.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.9.1.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -93,7 +93,7 @@ If an inline save fails, GiTex opens the review panel with your unsaved draft so
 
 Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. Selecting another thread replaces the content of the same tab; switching back restores its unsaved edit/reply drafts and expanded sections while the tab remains open. It supports editing, replies, and expandable **History** sections. **Open source** returns to the associated passage; **Open saved excerpt** opens the saved text when the location is outdated. Comment deletion is not provided.
 
-Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.9.0. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
+Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.9.1. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
 
 ## Review panel layout
 
@@ -111,7 +111,7 @@ Resolving a thread with an unsaved inline edit keeps the draft recoverable in th
 
 ## Tracking through text edits
 
-New tracking references save the selected lines and one preceding and one following sentence in the optional `sentenceContext` field. Sentences can span multiple lines; whitespace and CRLF are normalized. Blank lines are skipped to find the next available sentence within 64 lines on each side. Named LaTeX headings such as `\section*{작은 생각}` can also supply context; stars, optional short titles, nested formatting, and trailing labels are supported. Heading comparisons use their titles, not the shared command syntax. Bare structural commands such as `\begin`/`\end` and LaTeX comments are excluded. Extraction skips oversized blocks and stores at most 4,096 characters per context. Unavailable context stays empty. The existing `before`/`after` fields still retain up to three lines each.
+New tracking references save the selected lines and one preceding and one following sentence in the optional `sentenceContext` field. Sentences can span multiple lines; whitespace and CRLF are normalized. Context does not require final punctuation: a nearby paragraph or file boundary also ends a valid excerpt, so `랄랄루` after a selected `헬로` is retained. A fragment clipped by the 64-line search window is still excluded. Short excerpts are saved for display and matching evidence, but are not sufficient by themselves to estimate a missing passage. Blank lines are skipped to find the next available sentence within 64 lines on each side. Named LaTeX headings such as `\section*{작은 생각}` can also supply context; stars, optional short titles, nested formatting, and trailing labels are supported. Heading comparisons use their titles, not the shared command syntax. Bare structural commands such as `\begin`/`\end` and LaTeX comments are excluded. Extraction skips oversized blocks and stores at most 4,096 characters per context. Unavailable context stays empty. The existing `before`/`after` fields still retain up to three lines each.
 
 GiTex 0.9.0 keeps two references:
 
@@ -145,6 +145,8 @@ Starting in 0.8.1, empty sentence fields from 0.8.0 also fall back to available 
 Version 0.9.0 also recognizes a document terminator already present in legacy saved line context without rewriting that event. Older data lacking a saved boundary remains valid; a reliable attached match can establish local context, and the next attached comment save or manual move can add the boundary to the shared reference. The event format remains version 1. Older clients can read the optional boundary field, but local tracking and end-boundary estimates require 0.9.0 or later.
 
 The review panel's **Tracking history** shows the original passage and later reference snapshots with authors and timestamps. Each snapshot is part of the same immutable event as the saved edit/reply and is shared with comments. Concurrent updates preserve both snapshots and choose the current one deterministically. A failed or stale comment save cannot change its reference.
+
+In 0.9.1, previously empty sentence fields can gain unpunctuated context in **Local context** when the passage is reliably attached. Existing **Saved reference** snapshots and history stay unchanged; save an attached comment/reply or move it manually to renew the shared reference.
 
 ## Move a comment manually
 
@@ -235,7 +237,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.9.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.9.1.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |
