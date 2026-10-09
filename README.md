@@ -53,7 +53,7 @@ Automatic sync runs once after saving a comment, reply, edit, or manual location
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.10.0.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.10.1.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -63,7 +63,7 @@ You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaT
    ```
 
 4. GiTex uses `origin` by default. Run **GiTex: Connect Repository** to choose another remote or add one.
-5. Select lines in a paper file and press **Ctrl+Shift+/** (**Cmd+Shift+/** on macOS) to enter a comment. With no selection, the comment applies to the current line. You can also use **GiTex: Add Line Comment** in the editor context menu or the comment button in the editor gutter.
+5. Select lines in a paper file and press **Ctrl+Shift+/** (**Cmd+Shift+/** on macOS) to enter a comment. With no selection, the comment applies to the current line. You can also use **GiTex: Add Line Comment** in the editor context menu or the comment button in the editor gutter. Empty or whitespace-only lines have no new-comment gutter button, and an entirely blank selection is rejected before the input opens. Select at least one line containing text.
 6. Saving a comment, reply, or edit automatically syncs reviews in the background. Use **GiTex: Fetch Comments** to receive reviews without publishing, or **GiTex: Sync Comments** to receive and publish manually.
 7. Commit and synchronize changes to the paper itself through Source Control.
 
@@ -93,7 +93,7 @@ If an inline save fails, GiTex opens the review panel with your unsaved draft so
 
 Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. Selecting another thread replaces the content of the same tab; switching back restores its unsaved edit/reply drafts and expanded sections while the tab remains open. It supports editing, replies, and expandable **History** sections. **Open source** returns to the associated passage; **Open saved excerpt** opens the saved text when the location is outdated. Comment deletion is not provided.
 
-Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.10.0. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
+Edits are saved locally as new immutable events, then automatically synchronized when enabled. **Sync Comments** is also available manually. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 or later before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.10.1. Upgrade all collaborators to 0.5.0 before sharing manual moves; earlier versions cannot read move events.
 
 ## Review panel layout
 
@@ -150,7 +150,7 @@ In 0.9.1, previously empty sentence fields can gain unpunctuated context in **Lo
 
 Version 0.9.2 favors **Uncertain** whenever usable localization evidence remains. LaTeX line wrapping still combines `랄랄루` and `랄랄라.` into `랄랄루 랄랄라.`; an older saved `랄랄루` can match the beginning of that extended context. Removing a commented `헬로` between a unique heading and this following text therefore keeps an estimated marker. Estimates never become new shared or local reference snapshots automatically.
 
-Version 0.10.0 shows missing-line estimates as **Uncertain · Estimated passage** rows above the following source line using [VS Code CodeLens](https://code.visualstudio.com/api/language-extensions/programmatic-language-features#codelens---show-actionable-context-information-within-source-code). These rows preview the saved passage, have no source line number, and do not modify the file, line count, dirty state, Git history, or LaTeX output. Existing blank or replacement lines still use ordinary candidate markers. Keep VS Code's `editor.codeLens` enabled to see virtual rows; the inline review remains available if it is disabled. At the physical end of a file without a following line, the CodeLens sits above the last line and explicitly says **After final line**; the comment widget sits below that line.
+Version 0.10.1 shows missing-line estimates as **Uncertain · Estimated passage** rows above the following source line using [VS Code CodeLens](https://code.visualstudio.com/api/language-extensions/programmatic-language-features#codelens---show-actionable-context-information-within-source-code). These rows preview the saved passage, have no source line number, and do not modify the file, line count, dirty state, Git history, or LaTeX output. Existing blank or replacement lines still use ordinary candidate markers. Keep VS Code's `editor.codeLens` enabled to see virtual rows; the inline review remains available if it is disabled. At the physical end of a file without a following line, the CodeLens sits above the last line and explicitly says **After final line**; the comment widget sits below that line.
 
 If saved and local references disagree, both markers open the same review tab and share one comment, draft, and history. The review lists both candidates with **Open saved candidate** and **Open local candidate** navigation. Exploring them never confirms either location or renews an anchor. Use **Move to editor selection** to confirm the intended passage and record the move; resolving hides both markers and reopening restores them. The candidates and virtual rows are derived from the current document, so existing review data needs no migration.
 
@@ -243,7 +243,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.10.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.10.1.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

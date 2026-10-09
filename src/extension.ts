@@ -63,8 +63,20 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.status.command = 'gitex.sync';
     this.controller.options = { prompt: 'Review this passage', placeHolder: 'Comment or explain your change…' };
     this.controller.commentingRangeProvider = {
-      provideCommentingRanges: document => this.repositoryFor(document.uri) && supported.test(document.uri.fsPath)
-        ? [new vscode.Range(0, 0, document.lineCount - 1, 0)] : []
+      provideCommentingRanges: document => {
+        if (!this.repositoryFor(document.uri) || !supported.test(document.uri.fsPath)) { return []; }
+        const ranges: vscode.Range[] = [];
+        let start: number | undefined;
+        for (let line = 0; line <= document.lineCount; line++) {
+          if (line < document.lineCount && document.lineAt(line).text.trim()) {
+            start ??= line;
+          } else if (start !== undefined) {
+            ranges.push(new vscode.Range(start, 0, line - 1, document.lineAt(line - 1).text.length));
+            start = undefined;
+          }
+        }
+        return ranges;
+      }
     };
     const tree = this.tree = vscode.window.createTreeView('gitex.comments', { treeDataProvider: this, manageCheckboxStateManually: true });
     context.subscriptions.push(this, tree, tree.onDidChangeCheckboxState(event => {
