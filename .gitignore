@@ -31,3 +31,10 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# VS Code extension
+node_modules/
+out/
+dist/
+*.vsix
+.vscode-test/

@@ -1,0 +1,62 @@
+import { Anchor } from './anchor';
+
+export interface Author { name: string; email: string }
+interface BaseEvent { version: 1; id: string; threadId: string; clock: number; at: string; author: Author }
+export type ReviewEvent = BaseEvent & (
+  { type: 'create'; anchor: Anchor; body: string } |
+  { type: 'reply'; body: string } |
+  { type: 'state'; resolved: boolean }
+);
+export interface ReviewThread {
+  id: string;
+  anchor: Anchor;
+  comments: Array<{ id: string; body: string; author: Author; at: string }>;
+  resolved: boolean;
+}
+
+const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const objectId = /^[a-f0-9]{40}([a-f0-9]{24})?$/;
+export function validPath(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && !value.startsWith('/') && !value.includes('\\') &&
+    !value.includes(':') && !/[\x00-\x1f]/.test(value) && value.split('/').every(part => part !== '..' && part !== '.' && part !== '' && part.toLowerCase() !== '.git');
+}
+function strings(value: unknown): value is string[] { return Array.isArray(value) && value.every(line => typeof line === 'string' && !line.includes('\n')); }
+
+export function parseEvent(text: string): ReviewEvent {
+  const e = JSON.parse(text);
+  const bad = () => { throw new Error('Invalid GiTex review data. No remote data has been overwritten.'); };
+  if (!e || e.version !== 1 || !uuid.test(e.id) || !uuid.test(e.threadId) || !Number.isSafeInteger(e.clock) || e.clock < 1 ||
+      typeof e.at !== 'string' || !Number.isFinite(Date.parse(e.at)) || !e.author ||
+      typeof e.author.name !== 'string' || typeof e.author.email !== 'string') { return bad(); }
+  if (e.type === 'create' || e.type === 'reply') {
+    if (typeof e.body !== 'string' || !e.body.trim() || e.body.length > 100_000) { return bad(); }
+  }
+  if (e.type === 'create') {
+    const a = e.anchor;
+    if (e.threadId !== e.id || !a || !validPath(a.path) ||
+        !(a.baseCommit === null || (typeof a.baseCommit === 'string' && objectId.test(a.baseCommit))) ||
+        typeof a.documentHash !== 'string' || !/^[a-f0-9]{64}$/.test(a.documentHash) ||
+        !Number.isSafeInteger(a.startLine) || a.startLine < 0 || !Number.isSafeInteger(a.endLine) || a.endLine < a.startLine ||
+        !strings(a.selected) || a.selected.length !== a.endLine - a.startLine + 1 || !a.selected.some((line: string) => line.trim()) ||
+        !strings(a.before) || a.before.length > 3 || !strings(a.after) || a.after.length > 3 ||
+        !Number.isSafeInteger(a.occurrences) || a.occurrences < 1) { return bad(); }
+  } else if (e.type === 'state') {
+    if (typeof e.resolved !== 'boolean') { return bad(); }
+  } else if (e.type !== 'reply') { return bad(); }
+  return e as ReviewEvent;
+}
+
+export function materialize(events: ReviewEvent[]): ReviewThread[] {
+  const ordered = [...events].sort((a, b) => a.clock - b.clock || a.id.localeCompare(b.id, 'en'));
+  const threads = new Map<string, ReviewThread>();
+  for (const e of ordered) {
+    if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, comments: [], resolved: false }); }
+  }
+  for (const e of ordered) {
+    const thread = threads.get(e.threadId);
+    if (!thread) { throw new Error('A GiTex comment references a missing thread.'); }
+    if (e.type === 'state') { thread.resolved = e.resolved; }
+    else { thread.comments.push({ id: e.id, body: e.body, author: e.author, at: e.at }); }
+  }
+  return [...threads.values()];
+}

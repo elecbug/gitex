@@ -1,0 +1,194 @@
+{
+  "name": "gitex",
+  "displayName": "GiTex",
+  "description": "Git-backed line comments and collaboration for LaTeX papers.",
+  "version": "0.1.0",
+  "publisher": "gitex-local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "latex",
+    "git",
+    "review",
+    "comments"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": {
+      "supported": false
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "test:extension": "npm run compile && node out/test/host/run.js",
+    "package": "npx --yes @vscode/vsce@3.6.2 package --no-dependencies --allow-missing-repository --out gitex-0.1.0.vsix",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "1.90.0",
+    "@vscode/test-electron": "3.1.0",
+    "typescript": "5.9.3"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "gitex.clone",
+        "title": "GiTex: Clone Repository"
+      },
+      {
+        "command": "gitex.connect",
+        "title": "GiTex: Connect Repository"
+      },
+      {
+        "command": "gitex.addComment",
+        "title": "GiTex: Add Line Comment"
+      },
+      {
+        "command": "gitex.sync",
+        "title": "GiTex: Sync Comments",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "gitex.refresh",
+        "title": "GiTex: Refresh Comments",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "gitex.reply",
+        "title": "Reply"
+      },
+      {
+        "command": "gitex.resolve",
+        "title": "Resolve Thread",
+        "icon": "$(check)"
+      },
+      {
+        "command": "gitex.reopen",
+        "title": "Reopen Thread",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "gitex.openThread",
+        "title": "GiTex: Open Comment"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "gitex.comments",
+          "name": "GiTex Comments"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "gitex.comments",
+        "contents": "Select lines in a LaTeX file and run [Add Line Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Connect Repository](command:gitex.connect)\nUse Sync Comments to share reviews with collaborators."
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "gitex.addComment",
+          "when": "resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/",
+          "group": "gitex"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "gitex.sync",
+          "when": "view == gitex.comments",
+          "group": "navigation"
+        },
+        {
+          "command": "gitex.refresh",
+          "when": "view == gitex.comments",
+          "group": "navigation"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "gitex.reply",
+          "when": "commentController == gitex",
+          "group": "inline"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "gitex.resolve",
+          "when": "commentController == gitex && commentThread == gitex-open",
+          "group": "navigation"
+        },
+        {
+          "command": "gitex.reopen",
+          "when": "commentController == gitex && commentThread == gitex-resolved",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "gitex.resolve",
+          "when": "view == gitex.comments && viewItem == gitex-open",
+          "group": "inline"
+        },
+        {
+          "command": "gitex.reopen",
+          "when": "view == gitex.comments && viewItem == gitex-resolved",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "gitex.reply",
+          "when": "false"
+        },
+        {
+          "command": "gitex.resolve",
+          "when": "false"
+        },
+        {
+          "command": "gitex.reopen",
+          "when": "false"
+        },
+        {
+          "command": "gitex.openThread",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "GiTex",
+      "properties": {
+        "gitex.remote": {
+          "type": "string",
+          "default": "origin",
+          "scope": "resource",
+          "description": "Git remote used by Sync Comments. The remote branch gitex-comments is reserved for GiTex."
+        },
+        "gitex.showResolved": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show resolved comment threads."
+        }
+      }
+    }
+  }
+}

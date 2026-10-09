@@ -1,0 +1,59 @@
+import * as vscode from 'vscode';
+import assert from 'node:assert/strict';
+import * as path from 'node:path';
+import { ReviewStore } from '../../src/store';
+
+export async function run(): Promise<void> {
+  const extension = vscode.extensions.getExtension('gitex-local.gitex');
+  assert.ok(extension, 'the development extension must be discoverable');
+  const app = await extension.activate();
+  assert.ok(extension.isActive);
+  const root = vscode.workspace.workspaceFolders![0].uri.fsPath;
+  const store = new ReviewStore(root);
+  const head = await store.head();
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(root, 'main.tex')));
+  const editor = await vscode.window.showTextDocument(document);
+  editor.selection = new vscode.Selection(2, 0, 2, 18);
+  await vscode.commands.executeCommand('gitex.addComment', '실제 편집기에서 작성한 주석');
+  let threads = await store.threads();
+  assert.equal(threads.length, 1);
+  assert.equal(threads[0].anchor.startLine, 2);
+  assert.equal(app.getChildren().length, 1);
+  assert.equal(app.getChildren()[0].location.kind, 'attached');
+
+  // Exercise the same CommentReply payload used by VS Code's inline reply widget.
+  const native = [...app.nativeThreads.values()][0] as vscode.CommentThread;
+  assert.equal(native.comments.length, 1);
+  assert.equal(native.contextValue, 'gitex-open');
+  await vscode.commands.executeCommand('gitex.reply', { thread: native, text: 'Inline reply' });
+  assert.equal((await store.threads())[0].comments.length, 2);
+  await vscode.commands.executeCommand('gitex.resolve', native);
+  assert.equal((await store.threads())[0].resolved, true);
+  await vscode.commands.executeCommand('gitex.reopen', native);
+  assert.equal((await store.threads())[0].resolved, false);
+
+  const gutterThread = app.controller.createCommentThread(document.uri, new vscode.Range(0, 0, 1, 0), []);
+  await vscode.commands.executeCommand('gitex.reply', { thread: gutterThread, text: 'New thread from the editor gutter' });
+  threads = await store.threads();
+  assert.equal(threads.length, 2);
+  assert.equal(threads[1].anchor.endLine, 1, 'Comment API ranges include the last line even at column zero');
+  assert.equal(gutterThread.comments.length, 1);
+
+  await editor.edit(edit => edit.insert(new vscode.Position(0, 0), '% inserted paragraph\n'));
+  await vscode.commands.executeCommand('gitex.refresh');
+  assert.equal(app.getChildren()[0].location.startLine, 3);
+  assert.equal(native.range!.start.line, 3);
+  await editor.edit(edit => edit.replace(new vscode.Range(3, 0, 3, document.lineAt(3).text.length), 'The result has changed.'));
+  await vscode.commands.executeCommand('gitex.refresh');
+  assert.equal(app.getChildren()[0].location.kind, 'outdated');
+  await vscode.commands.executeCommand('gitex.openThread', app.getChildren()[0]);
+  assert.equal(vscode.window.activeTextEditor!.document.uri.scheme, 'gitex-original');
+  assert.match(vscode.window.activeTextEditor!.document.getText(), /A reviewed result\./);
+
+  await vscode.commands.executeCommand('gitex.sync');
+  const published = await store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']);
+  assert.match(published, /refs\/heads\/gitex-comments/);
+  assert.equal(await store.head(), head);
+  assert.equal(document.isDirty, true, 'sync must preserve unsaved editor changes');
+  console.log('GiTex extension host: activation, inline comments, reply, resolve/reopen, re-anchoring, original excerpt, and sync passed.');
+}
