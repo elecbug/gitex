@@ -46,7 +46,7 @@ export async function run(): Promise<void> {
   assert.equal(app.getChildren()[0].location.kind, 'attached');
 
   // Exercise the same CommentReply payload used by VS Code's inline reply widget.
-  const native = [...app.nativeThreads.values()][0] as vscode.CommentThread;
+  let native = [...app.nativeThreads.values()][0] as vscode.CommentThread;
   assert.equal(native.comments.length, 1);
   assert.equal(native.contextValue, 'gitex-open');
   await vscode.commands.executeCommand('gitex.reply', { thread: native, text: 'Inline reply' });
@@ -54,7 +54,13 @@ export async function run(): Promise<void> {
   assert.equal((await store.threads())[0].comments.length, 2);
   await vscode.commands.executeCommand('gitex.resolve', native);
   assert.equal((await store.threads())[0].resolved, true);
-  await vscode.commands.executeCommand('gitex.reopen', native);
+  const firstKey = app.getChildren()[0].key;
+  assert.equal(app.getChildren().length, 1, 'resolved comments remain in Explorer');
+  assert.equal(app.nativeThreads.has(firstKey), false, 'resolved comments have no editor widget');
+  assert.equal(app.getTreeItem(app.getChildren()[0]).checkboxState.state, vscode.TreeItemCheckboxState.Checked);
+  await app.checkResolved([[app.getChildren()[0], vscode.TreeItemCheckboxState.Unchecked]]);
+  native = app.nativeThreads.get(firstKey);
+  assert.ok(native, 'unchecking restores the editor widget');
   assert.equal((await store.threads())[0].resolved, false);
   assert.equal(automaticSyncs, 2, 'resolve/reopen do not trigger save-only auto sync');
 
@@ -68,18 +74,45 @@ export async function run(): Promise<void> {
   assert.equal(gutterThread.comments.length, 1);
 
   await reviewTests(app, store, native);
+  native = app.nativeThreads.get(firstKey);
   editor = await vscode.window.showTextDocument(document);
 
   await editor.edit(edit => edit.insert(new vscode.Position(0, 0), '% inserted paragraph\n'));
   await vscode.commands.executeCommand('gitex.refresh');
   assert.equal(app.getChildren()[0].location.startLine, 3);
   assert.equal(native.range!.start.line, 3);
-  await editor.edit(edit => edit.replace(new vscode.Range(3, 0, 3, document.lineAt(3).text.length), 'The result has changed.'));
+
+  const updatePaper = async (body: string) => {
+    await editor.edit(edit => edit.replace(new vscode.Range(3, 0, 3, document.lineAt(3).text.length), body));
+    await vscode.commands.executeCommand('gitex.refresh');
+  };
+  const config = vscode.workspace.getConfiguration('gitex', vscode.workspace.workspaceFolders![0].uri);
+  await config.update('autoSyncOnSave', false, vscode.ConfigurationTarget.WorkspaceFolder);
+  await updatePaper('A reviewed result!');
+  assert.equal(app.getChildren()[0].location.kind, 'attached');
+  assert.ok(app.getChildren()[0].location.similarity < 1);
+  const comment = native.comments[0] as any;
+  await vscode.commands.executeCommand('gitex.editComment', comment);
+  comment.body = 'Reviewed the slightly updated passage';
+  await vscode.commands.executeCommand('gitex.saveComment', comment);
+  let tracked = (await store.threads())[0];
+  assert.deepEqual(tracked.anchor.selected, ['A reviewed result!']);
+  assert.equal(tracked.anchor.startLine, 3);
+  assert.deepEqual(tracked.anchorHistory[0].anchor.selected, ['A reviewed result.']);
+  assert.equal(app.getChildren()[0].location.similarity, undefined, 'saving renews an exact reference');
+  await updatePaper('A reviewed result!!');
+  await vscode.commands.executeCommand('gitex.reply', { thread: native, text: 'Reviewing the next wording' });
+  tracked = (await store.threads())[0];
+  assert.deepEqual(tracked.anchor.selected, ['A reviewed result!!']);
+  const referenceBefore = tracked.anchor;
+  await updatePaper('A completely unrelated observation about hardware.');
   await vscode.commands.executeCommand('gitex.refresh');
   assert.equal(app.getChildren()[0].location.kind, 'outdated');
   await vscode.commands.executeCommand('gitex.openThread', app.getChildren()[0]);
   assert.equal(vscode.window.activeTextEditor!.document.uri.scheme, 'gitex-original');
-  assert.match(vscode.window.activeTextEditor!.document.getText(), /A reviewed result\./);
+  assert.match(vscode.window.activeTextEditor!.document.getText(), /A reviewed result!!/);
+  await app.panelAction(app.getChildren()[0], { type: 'reply', body: 'Outdated review still accepts replies', requestId: 'test' });
+  assert.deepEqual((await store.threads())[0].anchor, referenceBefore, 'ambiguous or missing text must not reset the reference');
 
   await vscode.commands.executeCommand('gitex.sync');
   const published = await store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']);

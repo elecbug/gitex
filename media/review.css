@@ -12,3 +12,5 @@ textarea { display: block; box-sizing: border-box; width: 100%; margin: 8px 0; p
 :focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 #status { color: var(--vscode-descriptionForeground); }
 #error { color: var(--vscode-errorForeground); }
+.resolved-toggle { display: flex; align-items: center; gap: 6px; margin: 12px 0; cursor: pointer; }
+.resolved-toggle input { accent-color: var(--vscode-checkbox-foreground); }

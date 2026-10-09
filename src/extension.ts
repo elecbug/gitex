@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { createAnchor, locateAnchor, Location } from './anchor';
+import { Anchor, createAnchor, locateAnchor, Location } from './anchor';
 import { Git, redact } from './git';
 import { ReviewComment, ReviewThread, validPath } from './model';
 import { ReviewStore } from './store';
@@ -36,6 +36,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private readonly syncs = new Map<string, Promise<void>>();
   private readonly syncErrors = new Map<string, string>();
   private readonly excerpts = new Map<string, string>();
+  private readonly locations = new WeakMap<vscode.TextDocument, { version: number; entries: Map<string, { reference: string; location: Location }> }>();
   private items: ThreadItem[] = [];
   private timer?: ReturnType<typeof setTimeout>;
   private refreshing: Promise<void> = Promise.resolve();
@@ -48,7 +49,10 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       provideCommentingRanges: document => this.repositoryFor(document.uri) && supported.test(document.uri.fsPath)
         ? [new vscode.Range(0, 0, document.lineCount - 1, 0)] : []
     };
-    context.subscriptions.push(this, vscode.window.registerTreeDataProvider('gitex.comments', this),
+    const tree = vscode.window.createTreeView('gitex.comments', { treeDataProvider: this, manageCheckboxStateManually: true });
+    context.subscriptions.push(this, tree, tree.onDidChangeCheckboxState(event => {
+      void this.checkResolved(event.items).catch(error => { this.report(error); this.changed.fire(undefined); });
+    }),
       vscode.workspace.registerTextDocumentContentProvider('gitex-original', { provideTextDocumentContent: uri => this.excerpts.get(uri.toString()) ?? '' }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => this.schedule()),
       vscode.workspace.onDidOpenTextDocument(document => { if (document.uri.scheme === 'file') { this.schedule(); } }),
@@ -150,7 +154,15 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
         let location: Location;
         try {
           if (!documents.has(uri.toString())) { documents.set(uri.toString(), this.document(uri, repository)); }
-          location = locateAnchor(review.anchor, (await documents.get(uri.toString())!).getText());
+          const document = await documents.get(uri.toString())!;
+          let cached = this.locations.get(document);
+          if (!cached || cached.version !== document.version) {
+            cached = { version: document.version, entries: new Map() }; this.locations.set(document, cached);
+          }
+          const reference = review.anchorHistory.at(-1)!.id;
+          const previous = cached.entries.get(review.id);
+          location = previous?.reference === reference ? previous.location : locateAnchor(review.anchor, document.getText());
+          cached.entries.set(review.id, { reference, location });
         } catch { location = { kind: 'outdated', reason: 'The original file is missing, moved, or unavailable.' }; }
         next.push({ key: `${repository.store.root}:${review.id}`, repository, review, uri, location });
       }
@@ -160,7 +172,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     for (const item of next) {
       const { review, location } = item;
       if (location.kind !== 'attached') { continue; }
-      if (review.resolved && !vscode.workspace.getConfiguration('gitex', item.repository.folder.uri).get('showResolved', true)) { continue; }
+      if (review.resolved) { continue; }
       visible.add(item.key);
       const range = new vscode.Range(location.startLine, 0, location.endLine, 0);
       let thread = this.nativeThreads.get(item.key);
@@ -171,14 +183,14 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       thread.range = range;
       // Plain text avoids loading images or executing links supplied in shared comments.
       thread.comments = review.comments.map(comment => this.nativeComment(item, comment));
-      thread.label = review.resolved ? 'GiTex · Resolved' : 'GiTex';
+      thread.label = location.similarity === undefined ? 'GiTex' : `GiTex · Similar text (${Math.round(location.similarity * 100)}%)`;
       thread.contextValue = review.resolved ? 'gitex-resolved' : 'gitex-open';
       thread.state = review.resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
       this.threadItems.set(thread, item);
     }
     for (const [key, thread] of this.nativeThreads) {
       if (!visible.has(key)) {
-        if (thread.comments.some(comment => comment.mode === vscode.CommentMode.Editing)) { thread.label = 'GiTex · Draft preserved'; }
+        if (!next.find(item => item.key === key)?.review.resolved && thread.comments.some(comment => comment.mode === vscode.CommentMode.Editing)) { thread.label = 'GiTex · Draft preserved'; }
         else { thread.dispose(); this.nativeThreads.delete(key); }
       }
     }
@@ -193,17 +205,18 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     if (this.repositories.size) { this.status.show(); } else { this.status.hide(); }
   }
 
-  getChildren(): ThreadItem[] {
-    return this.items.filter(item => !item.review.resolved || vscode.workspace.getConfiguration('gitex', item.repository.folder.uri).get('showResolved', true));
-  }
+  getChildren(): ThreadItem[] { return this.items; }
   getTreeItem(item: ThreadItem): vscode.TreeItem {
     const first = item.review.comments[0];
     const node = new vscode.TreeItem(first.body.split('\n')[0].slice(0, 100));
     node.id = item.key;
-    node.description = `${item.review.anchor.path}:${item.location.kind === 'attached' ? item.location.startLine + 1 : '?'}${item.location.kind === 'outdated' ? ' · Outdated' : ''}`;
+    node.description = `${item.review.anchor.path}:${item.location.kind === 'attached' ? item.location.startLine + 1 : '?'}${item.review.resolved ? ' · Resolved' : ''}${item.location.kind === 'outdated' ? ' · Outdated' : item.location.similarity !== undefined ? ' · Similar text' : ''}`;
     node.tooltip = `${first.author.name}: ${first.body}\n${item.location.kind === 'outdated' ? item.location.reason : item.review.resolved ? 'Resolved' : 'Open'}`;
     node.iconPath = new vscode.ThemeIcon(item.location.kind === 'outdated' ? 'warning' : item.review.resolved ? 'pass' : 'comment-discussion');
     node.contextValue = item.review.resolved ? 'gitex-resolved' : 'gitex-open';
+    node.checkboxState = { state: item.review.resolved ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked,
+      tooltip: item.review.resolved ? 'Reopen: show in the paper editor' : 'Resolve: hide from the paper editor',
+      accessibilityInformation: { label: 'Resolved', role: 'checkbox' } };
     node.command = { command: 'gitex.reviewThread', title: 'Open review', arguments: [item] };
     return node;
   }
@@ -233,12 +246,24 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     if (native) { native.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded; }
   }
 
+  private async currentAnchor(item: ThreadItem): Promise<Anchor | undefined> {
+    const review = (await item.repository.store.threads()).find(review => review.id === item.review.id);
+    if (!review) { return undefined; }
+    const head = await item.repository.store.head();
+    let document: vscode.TextDocument;
+    try { document = await this.document(item.uri, item.repository); } catch { return undefined; }
+    const text = document.getText();
+    const location = locateAnchor(review.anchor, text);
+    if (location.kind !== 'attached') { return undefined; }
+    return createAnchor(review.anchor.path, text, location.startLine, location.endLine, head);
+  }
+
   private async reply(reply: vscode.CommentReply): Promise<void> {
     if (!reply?.thread || !reply.text.trim()) { return; }
     const item = this.threadItems.get(reply.thread);
     let repository = item?.repository;
     if (item) {
-      await item.repository.store.reply(item.review.id, reply.text);
+      await item.repository.store.reply(item.review.id, reply.text, await this.currentAnchor(item));
     }
     else {
       repository = this.repositoryFor(reply.thread.uri);
@@ -258,6 +283,10 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     await this.refresh();
   }
 
+  private async checkResolved(items: readonly [ThreadItem, vscode.TreeItemCheckboxState][]): Promise<void> {
+    for (const [item, state] of items) { await this.setResolved(item, state === vscode.TreeItemCheckboxState.Checked); }
+  }
+
   private async open(item: ThreadItem): Promise<void> {
     // Recompute locations before navigation; the user may have edited since this tree item was created.
     await this.refresh();
@@ -271,7 +300,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       const uri = vscode.Uri.from({ scheme: 'gitex-original', path: `/${item.review.id}/original.txt`,
         query: `${item.repository.store.root}:${item.review.comments.map(comment => comment.revisions.at(-1)!.id).join(',')}` });
       this.excerpts.set(uri.toString(), [
-        `GiTex — original excerpt from ${item.review.anchor.path}`,
+        `GiTex — saved tracking excerpt from ${item.review.anchor.path}`,
         `Lines ${item.review.anchor.startLine + 1}–${item.review.anchor.endLine + 1} in the author's local document`,
         `Base commit: ${item.review.anchor.baseCommit ?? '(not committed yet)'}`,
         item.location.reason, '', ...item.review.anchor.selected, '', 'Comments:',
@@ -322,7 +351,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const body = typeof native.body === 'string' ? native.body : native.body.value;
     const basedOn = native.editingRevision;
     const { item } = await this.commentTarget(native);
-    try { await item.repository.store.edit(item.review.id, native.commentId, body, basedOn); }
+    try { await item.repository.store.edit(item.review.id, native.commentId, body, basedOn, await this.currentAnchor(item)); }
     catch (error) {
       // VS Code closes the inline input as soon as Save is clicked, before async validation finishes.
       // Restore the saved preview and retain the rejected draft in the review panel's editor.
@@ -395,18 +424,32 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private async reviewThread(target: ThreadItem | vscode.CommentThread): Promise<void> {
     const item = target && ('review' in target ? target : this.threadItems.get(target));
     if (!item) { return; }
-    let panel = this.panels.get(item.key);
+    let panel = this.panels.values().next().value as ReviewPanel | undefined;
     if (!panel) {
-      panel = new ReviewPanel(this.context.extensionUri, item.key, action => this.panelAction(item, action), () => this.panels.delete(item.key));
-      this.panels.set(item.key, panel);
-    } else { panel.panel.reveal(); }
+      panel = new ReviewPanel(this.context.extensionUri, item.key, async (key, action) => {
+        const current = this.items.find(candidate => candidate.key === key);
+        if (!current) { throw new Error('This comment is no longer available in the open workspace. Your draft is preserved.'); }
+        await this.panelAction(current, action);
+      }, () => this.panels.clear());
+    } else { panel.key = item.key; panel.panel.reveal(); }
+    this.panels.clear();
+    this.panels.set(item.key, panel);
     this.renderPanels();
+    // Resolved inline widgets are removed, but their drafts remain recoverable in the shared review tab.
+    if (!this.nativeThreads.has(item.key)) {
+      for (const native of this.nativeComments.values()) {
+        if (native.threadKey !== item.key || native.mode !== vscode.CommentMode.Editing || !native.editingRevision) { continue; }
+        panel.preserveDraft(native.commentId, typeof native.body === 'string' ? native.body : native.body.value, native.editingRevision);
+        native.mode = vscode.CommentMode.Preview; native.editingRevision = undefined;
+      }
+    }
   }
 
   private async panelAction(item: ThreadItem, action: ReviewAction): Promise<void> {
     if (action.type === 'ready') { this.renderPanels(); return; }
-    if (action.type === 'edit') { await item.repository.store.edit(item.review.id, action.commentId, action.body, action.basedOn); }
-    else if (action.type === 'reply') { await item.repository.store.reply(item.review.id, action.body); }
+    if (action.type === 'edit') { await item.repository.store.edit(item.review.id, action.commentId, action.body, action.basedOn, await this.currentAnchor(item)); }
+    else if (action.type === 'reply') { await item.repository.store.reply(item.review.id, action.body, await this.currentAnchor(item)); }
+    else if (action.type === 'resolve') { await this.setResolved(item, action.resolved); return; }
     else if (action.type === 'source') { await this.open(item); return; }
     await this.afterSave(item.repository);
   }
@@ -420,7 +463,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       const status = this.syncErrors.get(item.repository.store.root) ||
         (automatic ? 'Auto sync after saving is enabled. Saved comments are fetched and pushed in the background.' :
           'Auto sync after saving is disabled. Edits are saved locally; use Sync Comments to publish them.');
-      panel.update(item.review, `${item.review.anchor.path} · ${item.review.resolved ? 'Resolved' : 'Open'}${item.location.kind === 'outdated' ? ' · Outdated' : ''}`, status);
+      panel.update(item.review, `${item.review.anchor.path} · ${item.review.resolved ? 'Resolved · Hidden in editor' : 'Open'}${item.location.kind === 'outdated' ? ' · Outdated' : item.location.similarity !== undefined ? ` · Similar text (${Math.round(item.location.similarity * 100)}%)` : ''}`, status);
     }
   }
 

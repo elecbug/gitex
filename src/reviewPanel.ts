@@ -4,16 +4,17 @@ import { ReviewThread } from './model';
 
 export type ReviewAction = { type: 'ready' | 'source' } |
   { type: 'edit'; commentId: string; body: string; basedOn: string; requestId: string } |
-  { type: 'reply'; body: string; requestId: string };
+  { type: 'reply'; body: string; requestId: string } |
+  { type: 'resolve'; resolved: boolean; requestId: string };
 
 /** Review editing and history with drafts preserved across updates. */
 export class ReviewPanel implements vscode.Disposable {
   readonly panel: vscode.WebviewPanel;
   private readonly listeners: vscode.Disposable[] = [];
   private ready = false;
-  private draft?: { commentId: string; body: string; basedOn: string };
+  private readonly drafts = new Map<string, { key: string; commentId: string; body: string; basedOn: string }>();
 
-  constructor(extensionUri: vscode.Uri, readonly key: string, onAction: (action: ReviewAction) => Promise<void>, onClose: () => void) {
+  constructor(extensionUri: vscode.Uri, public key: string, onAction: (key: string, action: ReviewAction) => Promise<void>, onClose: () => void) {
     this.panel = vscode.window.createWebviewPanel('gitex.review', 'GiTex Review', vscode.ViewColumn.Beside,
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')] });
     const nonce = randomBytes(16).toString('hex');
@@ -23,37 +24,40 @@ export class ReviewPanel implements vscode.Disposable {
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${this.panel.webview.cspSource}; script-src 'nonce-${nonce}';">
       <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="${style}"></head>
       <body><h1>GiTex Review</h1><p id="location"></p><p id="status" role="status"></p>
-      <button id="source">Open source / original excerpt</button><p id="error" role="alert"></p>
-      <main id="comments"></main><form id="reply-form"><label for="reply">Reply</label>
-      <textarea id="reply" rows="3" required maxlength="100000"></textarea><button type="submit">Save reply</button></form>
+      <button id="source">Open source / saved excerpt</button><p id="error" role="alert"></p>
+      <div id="thread"></div>
       <script nonce="${nonce}" src="${script}"></script></body></html>`;
     this.listeners.push(this.panel.webview.onDidReceiveMessage(async (message: unknown) => {
       if (!validAction(message)) { return; }
       try {
         if (message.type === 'ready') { this.ready = true; }
-        await onAction(message);
+        await onAction(message.type === 'ready' ? this.key : (message as ReviewAction & { key: string }).key, message);
         this.sendDraft();
         if ('requestId' in message) { await this.panel.webview.postMessage({ type: 'saved', requestId: message.requestId }); }
       } catch (error) {
         await this.panel.webview.postMessage({ type: 'error', requestId: 'requestId' in message ? message.requestId : undefined,
-          message: error instanceof Error ? error.message : String(error) });
+          key: 'key' in message ? message.key : this.key, message: error instanceof Error ? error.message : String(error) });
       }
     }), this.panel.onDidDispose(() => { this.listeners.forEach(listener => listener.dispose()); onClose(); }));
   }
 
   update(review: ReviewThread, location: string, status: string): void {
-    void this.panel.webview.postMessage({ type: 'render', review, location, status });
+    void this.panel.webview.postMessage({ type: 'render', key: this.key, review, location, status });
+    this.sendDraft();
   }
 
   preserveDraft(commentId: string, body: string, basedOn: string): void {
-    this.draft = { commentId, body, basedOn };
+    this.drafts.set(`${this.key}:${commentId}`, { key: this.key, commentId, body, basedOn });
     this.sendDraft();
   }
 
   private sendDraft(): void {
-    if (!this.ready || !this.draft) { return; }
-    void this.panel.webview.postMessage({ type: 'draft', ...this.draft });
-    this.draft = undefined;
+    if (!this.ready) { return; }
+    for (const [id, draft] of this.drafts) {
+      if (draft.key !== this.key) { continue; }
+      void this.panel.webview.postMessage({ type: 'draft', ...draft });
+      this.drafts.delete(id);
+    }
   }
 
   dispose(): void { this.panel.dispose(); }
@@ -62,7 +66,10 @@ export class ReviewPanel implements vscode.Disposable {
 function validAction(value: unknown): value is ReviewAction {
   if (!value || typeof value !== 'object') { return false; }
   const event = value as Record<string, unknown>;
-  if (event.type === 'ready' || event.type === 'source') { return true; }
+  if (event.type === 'ready') { return true; }
+  if (typeof event.key !== 'string') { return false; }
+  if (event.type === 'source') { return true; }
+  if (event.type === 'resolve') { return typeof event.resolved === 'boolean' && typeof event.requestId === 'string'; }
   if (typeof event.body !== 'string' || !event.body.trim() || event.body.length > 100_000 || typeof event.requestId !== 'string') { return false; }
   return event.type === 'reply' || (event.type === 'edit' && typeof event.commentId === 'string' && typeof event.basedOn === 'string');
 }

@@ -232,3 +232,60 @@ test('pull from a remote without a comments branch does not publish local commen
   assert.equal(await new Git(bare).ref(REMOTE_REF), null);
   assert.equal((await a.threads())[0].comments[0].body, 'Only local');
 });
+
+test('reply and edit snapshots renew tracking while preserving and synchronizing all references', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Original review');
+  const first = createAnchor('main.tex', paper.replace('A shared result.', 'A shared, verified result.'), 2, 2, await a.head());
+  await a.reply(id, 'Reviewed the new wording', first);
+  const second = createAnchor('main.tex', paper.replace('A shared result.', 'A verified experimental result.'), 2, 2, await a.head());
+  await a.edit(id, id, 'Updated review', id, second);
+  const thread = (await a.threads())[0];
+  assert.deepEqual(thread.anchor, second);
+  assert.deepEqual(thread.anchorHistory.map(entry => entry.anchor), [anchor, first, second]);
+  await a.sync(); await b.pull();
+  assert.deepEqual(await b.threads(), await a.threads());
+  assert.equal(locateAnchor(thread.anchor, paper.replace('A shared result.', 'A verified experimental result!')).kind, 'attached');
+});
+
+test('concurrent reference updates converge without erasing either saved passage', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Shared review'); await a.sync(); await b.pull();
+  const left = createAnchor('main.tex', paper.replace('A shared result.', 'A shared result from Alice.'), 2, 2, await a.head());
+  const right = createAnchor('main.tex', paper.replace('A shared result.', 'A shared result from Bob.'), 2, 2, await b.head());
+  await a.reply(id, 'Alice update', left); await b.reply(id, 'Bob update', right);
+  await a.sync(); await b.sync(); await a.pull();
+  const thread = (await a.threads())[0];
+  assert.equal(thread.anchorHistory.length, 3);
+  assert.deepEqual(new Set(thread.anchorHistory.map(entry => entry.anchor.selected[0])), new Set([anchor.selected[0], left.selected[0], right.selected[0]]));
+  assert.deepEqual(thread.anchor, thread.anchorHistory.at(-1)!.anchor);
+  assert.deepEqual(await a.threads(), await b.threads());
+});
+
+test('invalid or stale saves cannot change the tracking reference', async t => {
+  const { a, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Original');
+  const next = createAnchor('main.tex', paper.replace('A shared result.', 'A shared result with details.'), 2, 2, await a.head());
+  await a.edit(id, id, 'Current revision', id);
+  const before = await a.git.ref(LOCAL_REF);
+  await assert.rejects(a.edit(id, id, 'Stale revision', id, next), /changed while/);
+  await assert.rejects(a.reply(id, 'Wrong file', { ...next, path: 'other.tex' }), /cannot change the file path/);
+  await assert.rejects(a.reply(id, 'Bad range', { ...next, endLine: -1 }), /Invalid GiTex/);
+  assert.equal(await a.git.ref(LOCAL_REF), before);
+  assert.deepEqual((await a.threads())[0].anchor, anchor);
+});
+
+test('saving unchanged comment text can refresh its reference without redundant snapshots', async t => {
+  const { a, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Original');
+  const next = createAnchor('main.tex', paper.replace('A shared result.', 'A shared result with details.'), 2, 2, await a.head());
+  await a.edit(id, id, 'Original', id, next);
+  let thread = (await a.threads())[0];
+  assert.equal(thread.anchorHistory.length, 2);
+  const tip = await a.git.ref(LOCAL_REF);
+  await a.edit(id, id, 'Original', thread.comments[0].revisions.at(-1)!.id, next);
+  assert.equal(await a.git.ref(LOCAL_REF), tip);
+  await a.reply(id, 'Same passage', next);
+  thread = (await a.threads())[0];
+  assert.equal(thread.anchorHistory.length, 2);
+});

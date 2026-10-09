@@ -8,8 +8,8 @@ export const REMOTE_REF = 'refs/heads/gitex-comments';
 const marker = JSON.stringify({ format: 'gitex-comments', version: 1 });
 type Entry = { event: ReviewEvent; oid: string };
 type Entries = Map<string, Entry>;
-type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string } |
-  { type: 'edit'; commentId: string; basedOn: string; body: string } | { type: 'state'; resolved: boolean };
+type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string; anchor?: Anchor } |
+  { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor } | { type: 'state'; resolved: boolean };
 
 export class ReviewStore {
   readonly git: Git;
@@ -40,9 +40,9 @@ export class ReviewStore {
   create(anchor: Anchor, body: string): Promise<string> {
     return this.append(undefined, { type: 'create', anchor, body: body.trim() });
   }
-  reply(threadId: string, body: string): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim() }); }
-  edit(threadId: string, commentId: string, body: string, basedOn: string): Promise<string> {
-    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim() });
+  reply(threadId: string, body: string, anchor?: Anchor): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim(), anchor }); }
+  edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor): Promise<string> {
+    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor });
   }
   setResolved(threadId: string, resolved: boolean): Promise<string> { return this.append(threadId, { type: 'state', resolved }); }
 
@@ -55,13 +55,13 @@ export class ReviewStore {
         const entries = await this.read(old);
         if (threadId && !entries.has(threadId)) { throw new Error('The comment thread no longer exists locally. Refresh or sync comments.'); }
         if (payload.type === 'edit') {
-          const comment = materialize([...entries.values()].map(entry => entry.event))
-            .find(thread => thread.id === threadId)?.comments.find(comment => comment.id === payload.commentId);
+          const thread = materialize([...entries.values()].map(entry => entry.event)).find(thread => thread.id === threadId);
+          const comment = thread?.comments.find(comment => comment.id === payload.commentId);
           if (!comment) { throw new Error('The comment to edit does not exist in this thread.'); }
           if (comment.revisions.at(-1)!.id !== payload.basedOn) {
             throw new Error('This comment changed while you were editing. Your draft is preserved. Review the history, then cancel and edit the latest version.');
           }
-          if (comment.body === payload.body) { return threadId!; }
+          if (comment.body === payload.body && (!payload.anchor || JSON.stringify(payload.anchor) === JSON.stringify(thread!.anchor))) { return threadId!; }
         }
         const clock = Math.max(0, ...[...entries.values()].map(entry => entry.event.clock)) + 1;
         const event = parseEvent(JSON.stringify({ version: 1, id, threadId: threadId ?? id, clock, at: new Date().toISOString(), author, ...payload }));

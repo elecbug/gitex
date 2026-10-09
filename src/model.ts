@@ -4,8 +4,8 @@ export interface Author { name: string; email: string }
 interface BaseEvent { version: 1; id: string; threadId: string; clock: number; at: string; author: Author }
 export type ReviewEvent = BaseEvent & (
   { type: 'create'; anchor: Anchor; body: string } |
-  { type: 'reply'; body: string } |
-  { type: 'edit'; commentId: string; basedOn: string; body: string } |
+  { type: 'reply'; body: string; anchor?: Anchor } |
+  { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor } |
   { type: 'state'; resolved: boolean }
 );
 export interface CommentRevision { id: string; body: string; author: Author; at: string; basedOn?: string }
@@ -19,6 +19,7 @@ export interface ReviewComment {
 export interface ReviewThread {
   id: string;
   anchor: Anchor;
+  anchorHistory: { id: string; anchor: Anchor; author: Author; at: string }[];
   comments: ReviewComment[];
   resolved: boolean;
 }
@@ -40,20 +41,22 @@ export function parseEvent(text: string): ReviewEvent {
   if (e.type === 'create' || e.type === 'reply' || e.type === 'edit') {
     if (typeof e.body !== 'string' || !e.body.trim() || e.body.length > 100_000) { return bad(); }
   }
-  if (e.type === 'create') {
+  if (e.type === 'create' && e.threadId !== e.id) { return bad(); }
+  if (e.type === 'create' || ((e.type === 'edit' || e.type === 'reply') && e.anchor !== undefined)) {
     const a = e.anchor;
-    if (e.threadId !== e.id || !a || !validPath(a.path) ||
+    if (!a || !validPath(a.path) ||
         !(a.baseCommit === null || (typeof a.baseCommit === 'string' && objectId.test(a.baseCommit))) ||
         typeof a.documentHash !== 'string' || !/^[a-f0-9]{64}$/.test(a.documentHash) ||
         !Number.isSafeInteger(a.startLine) || a.startLine < 0 || !Number.isSafeInteger(a.endLine) || a.endLine < a.startLine ||
         !strings(a.selected) || a.selected.length !== a.endLine - a.startLine + 1 || !a.selected.some((line: string) => line.trim()) ||
         !strings(a.before) || a.before.length > 3 || !strings(a.after) || a.after.length > 3 ||
         !Number.isSafeInteger(a.occurrences) || a.occurrences < 1) { return bad(); }
-  } else if (e.type === 'state') {
+  }
+  if (e.type === 'state') {
     if (typeof e.resolved !== 'boolean') { return bad(); }
   } else if (e.type === 'edit') {
     if (!uuid.test(e.commentId) || !uuid.test(e.basedOn)) { return bad(); }
-  } else if (e.type !== 'reply') { return bad(); }
+  } else if (e.type !== 'reply' && e.type !== 'create') { return bad(); }
   return e as ReviewEvent;
 }
 
@@ -63,11 +66,18 @@ export function materialize(events: ReviewEvent[]): ReviewThread[] {
   const comments = new Map<string, { threadId: string; comment: ReviewComment }>();
   const applied = new Map<string, ReviewEvent>();
   for (const e of ordered) {
-    if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, comments: [], resolved: false }); }
+    if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, anchorHistory: [], comments: [], resolved: false }); }
   }
   for (const e of ordered) {
     const thread = threads.get(e.threadId);
     if (!thread) { throw new Error('A GiTex comment references a missing thread.'); }
+    if ((e.type === 'create' || e.type === 'reply' || e.type === 'edit') && e.anchor) {
+      if (e.anchor.path !== thread.anchor.path) { throw new Error('A GiTex tracking update cannot change the file path.'); }
+      if (!thread.anchorHistory.length || JSON.stringify(e.anchor) !== JSON.stringify(thread.anchor)) {
+        thread.anchorHistory.push({ id: e.id, anchor: e.anchor, author: e.author, at: e.at });
+        thread.anchor = e.anchor;
+      }
+    }
     if (e.type === 'state') { thread.resolved = e.resolved; }
     else if (e.type === 'edit') {
       const target = comments.get(e.commentId);
