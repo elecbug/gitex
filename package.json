@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed line comments and collaboration for LaTeX papers.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -49,6 +49,7 @@
     "@types/node": "^18.19.0",
     "@types/vscode": "1.90.0",
     "@vscode/test-electron": "3.1.0",
+    "playwright-core": "1.64.0",
     "typescript": "5.9.3"
   },
   "contributes": {
@@ -61,6 +62,35 @@
       }
     ],
     "commands": [
+      {
+        "command": "gitex.editComment",
+        "title": "Edit Comment",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "gitex.saveComment",
+        "title": "Save Edit",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "gitex.cancelEdit",
+        "title": "Cancel Edit"
+      },
+      {
+        "command": "gitex.commentHistory",
+        "title": "View Edit History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "gitex.reviewThread",
+        "title": "Open GiTex Review",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "gitex.pull",
+        "title": "GiTex: Fetch Comments",
+        "icon": "$(cloud-download)"
+      },
       {
         "command": "gitex.clone",
         "title": "GiTex: Clone Repository"
@@ -145,6 +175,11 @@
       ],
       "comments/commentThread/title": [
         {
+          "command": "gitex.reviewThread",
+          "when": "commentController == gitex && !commentThreadIsEmpty",
+          "group": "navigation@1"
+        },
+        {
           "command": "gitex.resolve",
           "when": "commentController == gitex && commentThread == gitex-open",
           "group": "navigation"
@@ -157,6 +192,11 @@
       ],
       "view/item/context": [
         {
+          "command": "gitex.openThread",
+          "when": "view == gitex.comments",
+          "group": "navigation"
+        },
+        {
           "command": "gitex.resolve",
           "when": "view == gitex.comments && viewItem == gitex-open",
           "group": "inline"
@@ -168,6 +208,26 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "gitex.editComment",
+          "when": "false"
+        },
+        {
+          "command": "gitex.saveComment",
+          "when": "false"
+        },
+        {
+          "command": "gitex.cancelEdit",
+          "when": "false"
+        },
+        {
+          "command": "gitex.commentHistory",
+          "when": "false"
+        },
+        {
+          "command": "gitex.reviewThread",
+          "when": "false"
+        },
         {
           "command": "gitex.reply",
           "when": "false"
@@ -184,11 +244,41 @@
           "command": "gitex.openThread",
           "when": "false"
         }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "gitex.editComment",
+          "when": "commentController == gitex && comment == gitex-comment",
+          "group": "inline@1"
+        },
+        {
+          "command": "gitex.commentHistory",
+          "when": "commentController == gitex && comment == gitex-comment",
+          "group": "inline@2"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "gitex.saveComment",
+          "when": "commentController == gitex && comment == gitex-comment",
+          "group": "inline@1"
+        },
+        {
+          "command": "gitex.cancelEdit",
+          "when": "commentController == gitex && comment == gitex-comment",
+          "group": "inline@2"
+        }
       ]
     },
     "configuration": {
       "title": "GiTex",
       "properties": {
+        "gitex.autoPullOnInteraction": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Fetch remote comments when interacting with the GiTex Review panel or invoking a comment action. Local edits are not pushed. Native inline expand/click events are unavailable in VS Code's stable API."
+        },
         "gitex.remote": {
           "type": "string",
           "default": "origin",

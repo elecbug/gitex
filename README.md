@@ -9,18 +9,20 @@ A VS Code extension for sharing line comments on LaTeX papers through Git. Use i
 - Open or clone a Git repository and select or add a remote for sharing comments.
 - Comment on one or more lines in `.tex`, `.bib`, `.sty`, `.cls`, and `.ltx` files.
 - Reply to comments and resolve or reopen threads inside the editor.
+- Edit comments and replies while preserving the original text and every edit in history.
+- Fetch remote comments automatically on interactions with the GiTex Review panel; enabled by default and configurable.
 - Browse threads in **GiTex Comments** in the Explorer and VS Code's **Comments** panel.
 - Follow the original passage when edits move it to different line numbers.
 - Preserve the original excerpt and mark comments **Outdated** when their passage changes or disappears.
 - Save comments offline and synchronize reviews from multiple users through a central bare repository.
 
-Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Sync Comments** synchronizes review data only; it leaves your working files, current branch, and staging area unchanged.
+Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Sync Comments** synchronizes and publishes review data; automatic fetching only receives remote reviews. Both leave your working files, current branch, and staging area unchanged.
 
 ## Installation and usage
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.1.1.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.2.0.vsix`.
 2. Open your local paper repository. To clone a repository, run **GiTex: Clone Repository**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -39,6 +41,36 @@ You can comment on unsaved edits as long as the file already exists on disk. If 
 The shortcut applies when the text editor has focus in an editable local `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` file. To customize it, search for `GiTex: Add Line Comment` in VS Code's Keyboard Shortcuts.
 
 Network authentication uses Git's SSH agent or HTTPS credential helper. Check that `git ls-remote origin` succeeds in a terminal in the same environment. You need permission to read and write the remote `gitex-comments` branch.
+
+## Editing comments and viewing history
+
+Use **Edit Comment** on an inline comment or reply, change its text, then select **Save Edit**. **Cancel Edit** discards the draft. The thread displays the latest saved text with an **Edited** label. **View Edit History** opens a read-only document containing the original text, every revision, and the editor and timestamp for each version.
+
+If an inline save fails, GiTex opens the review panel with your unsaved draft so you can recover it even though VS Code has closed the inline input.
+
+Click a thread in **GiTex Comments**, or choose **Open GiTex Review** from an inline thread, to open the review panel. It supports editing, replies, and expandable **History** sections. **Open source / original excerpt** returns to the associated passage. Comment deletion is not provided.
+
+Edits are saved locally as new immutable events. Use **Sync Comments** to publish them. If a remote change arrives while you are editing, your draft stays intact. Saving against an outdated version is rejected: review the history, then cancel and edit the latest version. Concurrent edits created offline are both retained in history; logical clock and event ID determine which version is displayed. All collaborators should upgrade to GiTex 0.2.0 before sharing edits, because earlier versions cannot read edit events. Existing comments remain readable in 0.2.0.
+
+## Fetch comments on interaction
+
+`gitex.autoPullOnInteraction` defaults to `true`. Opening the GiTex Review panel, focusing it, clicking inside it, expanding a comment or its history, and moving focus between controls fetch remote comments. Inline actions such as edit, save, cancel, history, reply, and resolve/reopen also fetch before proceeding. Overlapping interactions share an in-flight fetch rather than issuing duplicate requests.
+
+Automatic fetching merges remote reviews into the local review history and **never pushes local comments or edits**. On connection failure, local comments and drafts remain available; the review panel shows a status message and the GiTex Output channel records the error. There is no background polling.
+
+Disable it in VS Code Settings under **GiTex: Auto Pull On Interaction**, or add:
+
+```json
+{
+  "gitex.autoPullOnInteraction": false
+}
+```
+
+**GiTex: Fetch Comments** remains available for a manual pull, and **GiTex: Sync Comments** fetches and publishes regardless of this setting.
+
+**GiTex: Refresh Comments** also fetches when this setting is enabled; with it disabled, Refresh only reloads local data.
+
+VS Code's stable Comments API does not expose arbitrary clicks or expand/collapse events from its native inline comment widget. Use the GiTex Review panel for fetching on those interactions. Native inline actions listed above are covered, but simply expanding or clicking the native widget is not an automatic-fetch trigger.
 
 ## Try it with two users
 
@@ -70,7 +102,7 @@ Open `alice` and `bob` in separate VS Code windows with GiTex installed. Alice c
 | Local `refs/gitex/comments` | Local review history, including comments not yet shared |
 | Remote `refs/heads/gitex-comments` | Shared review history; reserved for GiTex |
 
-Thread creation, replies, and state changes are immutable events with UUIDs. Synchronization combines local and remote events, then performs a normal push. If another user publishes first, GiTex fetches, combines the events, and retries without force pushing. Updates from multiple windows sharing a local repository check the previous Git ref value to prevent overwriting one another.
+Thread creation, replies, edits, and state changes are immutable events with UUIDs. Synchronization combines local and remote events, then performs a normal push. If another user publishes first, GiTex fetches, combines the events, and retries without force pushing. Updates from multiple windows sharing a local repository check the previous Git ref value to prevent overwriting one another.
 
 Concurrent resolve and reopen events are ordered by logical clock and event ID to produce a consistent final state. Both events remain in the history. Author information comes from Git configuration; GiTex does not provide separate user authentication or signature verification.
 
@@ -87,7 +119,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.1.1.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.2.0.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |
@@ -110,14 +142,14 @@ make test-extension
 
 `make test-extension` uses the official test tools to download VS Code 1.90.2 and run the extension with a temporary repository and profile. On Linux CI, provide an X server or use `xvfb-run -a make test-extension`. Use `GITEX_VSCODE_VERSION=stable make test-extension` to run against the current stable release. `make package` downloads the official `vsce` tool and produces a VSIX; it does not publish to the Marketplace.
 
-Core tests cover concurrent pushes, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, deleted, or repeated passages. Extension host tests cover activation, editor comments and replies, thread state changes, location updates, original excerpts, and remote synchronization.
+Core tests cover concurrent pushes and edits, complete edit history, outdated drafts, pull without publishing, local updates from multiple windows, offline persistence, server rejection, metadata branch collisions, working tree and index preservation, and moved, deleted, or repeated passages. Extension host tests also use Playwright against the test instance's local debugging port to verify actual review-panel clicks, expansion, editing, draft preservation, and the automatic-fetch setting.
 
 ## Current scope
 
-- Synchronization runs on demand. Live collaborative typing and automatic server notifications are not implemented.
+- Publishing runs on demand; remote reviews are fetched on supported interactions by default. Live collaborative typing and automatic server notifications are not implemented.
 - Comments appear on LaTeX source. PDF annotations, semantic sentence analysis, and LaTeX compilation checks are not implemented.
 - Renamed files produce Outdated comments rather than automatic migration to the new path. Edited passages also require manual review.
-- Comment editing, deletion, and fine-grained permissions are not implemented. Users with repository write access can share replies and thread state changes.
+- Comment deletion and fine-grained permissions are not implemented. Users with repository write access can share edits, replies, and thread state changes. Original authorship and the editor of each revision are recorded separately.
 - Multiple workspace folders are supported, using the Git repository discovered for each folder. Open nested repositories as separate workspace folders.
 - This prototype combines events in memory and caps the combined output of each Git command at 32 MiB. Large-history optimization is future work.
 - Paper merges use existing Git features. Server-side merge approval and execution are not implemented.

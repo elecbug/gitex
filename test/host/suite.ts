@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { ReviewStore } from '../../src/store';
+import { reviewTests } from './review';
 
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('gitex-local.gitex');
@@ -12,7 +13,7 @@ export async function run(): Promise<void> {
   const store = new ReviewStore(root);
   const head = await store.head();
   const document = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(root, 'main.tex')));
-  const editor = await vscode.window.showTextDocument(document);
+  let editor = await vscode.window.showTextDocument(document);
   editor.selection = new vscode.Selection(2, 0, 2, 18);
   await vscode.commands.executeCommand('gitex.addComment', '실제 편집기에서 작성한 주석');
   let threads = await store.threads();
@@ -39,6 +40,9 @@ export async function run(): Promise<void> {
   assert.equal(threads[1].anchor.endLine, 1, 'Comment API ranges include the last line even at column zero');
   assert.equal(gutterThread.comments.length, 1);
 
+  await reviewTests(app, store, native);
+  editor = await vscode.window.showTextDocument(document);
+
   await editor.edit(edit => edit.insert(new vscode.Position(0, 0), '% inserted paragraph\n'));
   await vscode.commands.executeCommand('gitex.refresh');
   assert.equal(app.getChildren()[0].location.startLine, 3);
@@ -55,5 +59,5 @@ export async function run(): Promise<void> {
   assert.match(published, /refs\/heads\/gitex-comments/);
   assert.equal(await store.head(), head);
   assert.equal(document.isDirty, true, 'sync must preserve unsaved editor changes');
-  console.log('GiTex extension host: activation, inline comments, reply, resolve/reopen, re-anchoring, original excerpt, and sync passed.');
+  console.log('GiTex extension host: editing, history, automatic fetch, webview interactions, drafts, activation, anchoring, and sync passed.');
 }

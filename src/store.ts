@@ -8,7 +8,8 @@ export const REMOTE_REF = 'refs/heads/gitex-comments';
 const marker = JSON.stringify({ format: 'gitex-comments', version: 1 });
 type Entry = { event: ReviewEvent; oid: string };
 type Entries = Map<string, Entry>;
-type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string } | { type: 'state'; resolved: boolean };
+type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string } |
+  { type: 'edit'; commentId: string; basedOn: string; body: string } | { type: 'state'; resolved: boolean };
 
 export class ReviewStore {
   readonly git: Git;
@@ -40,6 +41,9 @@ export class ReviewStore {
     return this.append(undefined, { type: 'create', anchor, body: body.trim() });
   }
   reply(threadId: string, body: string): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim() }); }
+  edit(threadId: string, commentId: string, body: string, basedOn: string): Promise<string> {
+    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim() });
+  }
   setResolved(threadId: string, resolved: boolean): Promise<string> { return this.append(threadId, { type: 'state', resolved }); }
 
   private append(threadId: string | undefined, payload: Payload): Promise<string> {
@@ -50,10 +54,20 @@ export class ReviewStore {
         const old = await this.git.ref(LOCAL_REF);
         const entries = await this.read(old);
         if (threadId && !entries.has(threadId)) { throw new Error('The comment thread no longer exists locally. Refresh or sync comments.'); }
+        if (payload.type === 'edit') {
+          const comment = materialize([...entries.values()].map(entry => entry.event))
+            .find(thread => thread.id === threadId)?.comments.find(comment => comment.id === payload.commentId);
+          if (!comment) { throw new Error('The comment to edit does not exist in this thread.'); }
+          if (comment.revisions.at(-1)!.id !== payload.basedOn) {
+            throw new Error('This comment changed while you were editing. Your draft is preserved. Review the history, then cancel and edit the latest version.');
+          }
+          if (comment.body === payload.body) { return threadId!; }
+        }
         const clock = Math.max(0, ...[...entries.values()].map(entry => entry.event.clock)) + 1;
         const event = parseEvent(JSON.stringify({ version: 1, id, threadId: threadId ?? id, clock, at: new Date().toISOString(), author, ...payload }));
         const oid = await this.git.text(['hash-object', '-w', '--stdin'], JSON.stringify(event));
         entries.set(id, { event, oid });
+        materialize([...entries.values()].map(entry => entry.event));
         const commit = await this.commit(entries, old ? [old] : []);
         if (await this.advance(commit, old)) { return threadId ?? id; }
       }
@@ -61,47 +75,17 @@ export class ReviewStore {
     });
   }
 
+  pull(remote = 'origin'): Promise<ReviewThread[]> {
+    return this.exclusive(async () => {
+      await this.receive(remote);
+      return this.threads();
+    });
+  }
+
   sync(remote = 'origin'): Promise<ReviewThread[]> {
     return this.exclusive(async () => {
-      if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote)) { throw new Error('Choose a valid Git remote name with GiTex: Connect Repository.'); }
-      await this.git.text(['remote', 'get-url', remote]);
-      const tracking = `refs/gitex/remotes/${createHash('sha256').update(remote).digest('hex')}`;
       for (let attempt = 0; attempt < 5; attempt++) {
-        const advertised = await this.git.run(['ls-remote', '--exit-code', '--heads', remote, REMOTE_REF]);
-        let remoteTip: string | null = null;
-        if (advertised.code === 0) {
-          await this.git.text(['fetch', '--no-tags', '--no-write-fetch-head', remote, `+${REMOTE_REF}:${tracking}`]);
-          remoteTip = await this.git.ref(tracking);
-        } else if (advertised.code !== 2) { throw new GitError(advertised, 'ls-remote'); }
-        const remoteEntries = await this.read(remoteTip);
-        let ready = false;
-        for (let localAttempt = 0; localAttempt < 8; localAttempt++) {
-          const localTip = await this.git.ref(LOCAL_REF);
-          const localEntries = await this.read(localTip);
-          const union = new Map(localEntries);
-          for (const [id, entry] of remoteEntries) {
-            if (union.has(id) && union.get(id)!.oid !== entry.oid) { throw new Error('Conflicting immutable comment IDs. Sync stopped without overwriting data.'); }
-            union.set(id, entry);
-          }
-          materialize([...union.values()].map(entry => entry.event));
-          if (!remoteTip || localTip === remoteTip) { ready = true; break; }
-          if (!localTip) {
-            if (await this.advance(remoteTip, null)) { ready = true; break; }
-          } else {
-            const canFastForward = await this.git.run(['merge-base', '--is-ancestor', localTip, remoteTip]);
-            if (canFastForward.code === 0 && union.size === remoteEntries.size) {
-              if (await this.advance(remoteTip, localTip)) { ready = true; break; }
-              continue;
-            }
-            if (canFastForward.code !== 0 && canFastForward.code !== 1) { throw new GitError(canFastForward, 'merge-base'); }
-            const ancestor = await this.git.run(['merge-base', '--is-ancestor', remoteTip, localTip]);
-            if (ancestor.code === 0 && union.size === localEntries.size) { ready = true; break; }
-            if (ancestor.code !== 0 && ancestor.code !== 1) { throw new GitError(ancestor, 'merge-base'); }
-            const commit = await this.commit(union, [localTip, remoteTip]);
-            if (await this.advance(commit, localTip)) { ready = true; break; }
-          }
-        }
-        if (!ready) { throw new Error('Comments are busy in another window. Try syncing again.'); }
+        const remoteTip = await this.receive(remote);
         const publishTip = await this.git.ref(LOCAL_REF);
         if (!publishTip || publishTip === remoteTip) { return this.threads(); }
         // Publish the exact snapshot we validated. A later local edit stays queued for the next sync.
@@ -114,6 +98,46 @@ export class ReviewStore {
       }
       throw new Error('Other users are updating comments. Your local comments are saved; sync again.');
     });
+  }
+
+  private async receive(remote: string): Promise<string | null> {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote)) { throw new Error('Choose a valid Git remote name with GiTex: Connect Repository.'); }
+    await this.git.text(['remote', 'get-url', remote]);
+    const tracking = `refs/gitex/remotes/${createHash('sha256').update(remote).digest('hex')}`;
+    const advertised = await this.git.run(['ls-remote', '--exit-code', '--heads', remote, REMOTE_REF]);
+    let remoteTip: string | null = null;
+    if (advertised.code === 0) {
+      await this.git.text(['fetch', '--no-tags', '--no-write-fetch-head', remote, `+${REMOTE_REF}:${tracking}`]);
+      remoteTip = await this.git.ref(tracking);
+    } else if (advertised.code !== 2) { throw new GitError(advertised, 'ls-remote'); }
+    const remoteEntries = await this.read(remoteTip);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const localTip = await this.git.ref(LOCAL_REF);
+      const localEntries = await this.read(localTip);
+      const union = new Map(localEntries);
+      for (const [id, entry] of remoteEntries) {
+        if (union.has(id) && union.get(id)!.oid !== entry.oid) { throw new Error('Conflicting immutable comment IDs. Sync stopped without overwriting data.'); }
+        union.set(id, entry);
+      }
+      materialize([...union.values()].map(entry => entry.event));
+      if (!remoteTip || localTip === remoteTip) { return remoteTip; }
+      if (!localTip) {
+        if (await this.advance(remoteTip, null)) { return remoteTip; }
+      } else {
+        const forward = await this.git.run(['merge-base', '--is-ancestor', localTip, remoteTip]);
+        if (forward.code === 0 && union.size === remoteEntries.size) {
+          if (await this.advance(remoteTip, localTip)) { return remoteTip; }
+          continue;
+        }
+        if (forward.code !== 0 && forward.code !== 1) { throw new GitError(forward, 'merge-base'); }
+        const ancestor = await this.git.run(['merge-base', '--is-ancestor', remoteTip, localTip]);
+        if (ancestor.code === 0 && union.size === localEntries.size) { return remoteTip; }
+        if (ancestor.code !== 0 && ancestor.code !== 1) { throw new GitError(ancestor, 'merge-base'); }
+        const commit = await this.commit(union, [localTip, remoteTip]);
+        if (await this.advance(commit, localTip)) { return remoteTip; }
+      }
+    }
+    throw new Error('Comments are busy in another window. Try fetching again.');
   }
 
   private async read(tip: string | null): Promise<Entries> {

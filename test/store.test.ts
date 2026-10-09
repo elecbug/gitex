@@ -148,3 +148,87 @@ test('remote path traversal and malformed comments are rejected', () => {
   assert.equal(validPath('chapters/결과.tex'), true);
   assert.throws(() => parseEvent('{"version":99}'), /Invalid/);
 });
+
+test('editing comments and replies preserves every version and the original author', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Original comment');
+  await a.reply(id, 'Original reply');
+  const replyId = (await a.threads())[0].comments[1].id;
+  await a.edit(id, id, 'First edit', id);
+  await a.edit(id, replyId, 'Edited reply', replyId);
+  await a.sync(); await b.pull();
+  const current = (await b.threads())[0].comments[0];
+  await b.edit(id, id, 'Second edit by Bob', current.revisions.at(-1)!.id);
+  await b.sync(); await a.pull();
+  const comments = (await a.threads())[0].comments;
+  assert.equal(comments.length, 2);
+  assert.equal(comments[0].body, 'Second edit by Bob');
+  assert.equal(comments[0].author.name, 'Alice');
+  assert.deepEqual(comments[0].revisions.map(revision => revision.body), ['Original comment', 'First edit', 'Second edit by Bob']);
+  assert.equal(comments[0].revisions.at(-1)!.author.name, 'Bob');
+  assert.deepEqual(comments[1].revisions.map(revision => revision.body), ['Original reply', 'Edited reply']);
+  assert.deepEqual(await new ReviewStore(a.root).threads(), await b.threads());
+});
+
+test('concurrent offline edits converge and both conflicting versions remain in history', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Shared original');
+  await a.sync(); await b.pull();
+  await a.edit(id, id, 'Alice version', id);
+  await b.edit(id, id, 'Bob version', id);
+  await a.sync(); await b.sync(); await a.pull();
+  const comment = (await a.threads())[0].comments[0];
+  assert.deepEqual(new Set(comment.revisions.map(revision => revision.body)), new Set(['Shared original', 'Alice version', 'Bob version']));
+  assert.equal(comment.body, comment.revisions.at(-1)!.body);
+  assert.deepEqual(await a.threads(), await b.threads());
+});
+
+test('a stale edit is rejected after pull, and an unchanged edit creates no event', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Original');
+  const initial = await a.git.ref(LOCAL_REF);
+  await a.edit(id, id, 'Original', id);
+  assert.equal(await a.git.ref(LOCAL_REF), initial);
+  await a.sync(); await b.pull();
+  await b.edit(id, id, 'Remote update', id); await b.sync(); await a.pull();
+  const before = await a.git.ref(LOCAL_REF);
+  await assert.rejects(a.edit(id, id, 'Draft based on original', id), /changed while you were editing/);
+  assert.equal(await a.git.ref(LOCAL_REF), before);
+  assert.equal((await a.threads())[0].comments[0].body, 'Remote update');
+  await assert.rejects(a.edit(id, '11111111-1111-4111-8111-111111111111', 'Missing', id), /does not exist/);
+});
+
+test('pull merges remote edits with unpublished local work without pushing or touching the paper', async t => {
+  const { a, b, bare, anchor } = await fixture(t);
+  const id = await a.create(anchor, 'Shared original');
+  await a.sync(); await b.pull();
+  await a.reply(id, 'Unpublished local reply');
+  await b.edit(id, id, 'Remote edit', id); await b.sync();
+  const remoteBefore = await new Git(bare).ref(REMOTE_REF);
+  await writeFile(path.join(a.root, 'main.tex'), paper + '% staged\n');
+  await a.git.text(['add', 'main.tex']);
+  await writeFile(path.join(a.root, 'main.tex'), paper + '% staged\n% unstaged\n');
+  const head = await a.head();
+  const index = await a.git.text(['write-tree']);
+  const content = await readFile(path.join(a.root, 'main.tex'), 'utf8');
+  const run = a.git.run.bind(a.git);
+  a.git.run = async (args, input) => {
+    assert.notEqual(args[0], 'push', 'pull must never publish local events');
+    return run(args, input);
+  };
+  const threads = await a.pull();
+  assert.equal(threads[0].comments[0].body, 'Remote edit');
+  assert.equal(threads[0].comments[1].body, 'Unpublished local reply');
+  assert.equal(await new Git(bare).ref(REMOTE_REF), remoteBefore);
+  assert.equal(await a.head(), head);
+  assert.equal(await a.git.text(['write-tree']), index);
+  assert.equal(await readFile(path.join(a.root, 'main.tex'), 'utf8'), content);
+});
+
+test('pull from a remote without a comments branch does not publish local comments', async t => {
+  const { a, bare, anchor } = await fixture(t);
+  await a.create(anchor, 'Only local');
+  await a.pull();
+  assert.equal(await new Git(bare).ref(REMOTE_REF), null);
+  assert.equal((await a.threads())[0].comments[0].body, 'Only local');
+});

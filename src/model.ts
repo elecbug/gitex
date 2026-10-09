@@ -5,12 +5,21 @@ interface BaseEvent { version: 1; id: string; threadId: string; clock: number; a
 export type ReviewEvent = BaseEvent & (
   { type: 'create'; anchor: Anchor; body: string } |
   { type: 'reply'; body: string } |
+  { type: 'edit'; commentId: string; basedOn: string; body: string } |
   { type: 'state'; resolved: boolean }
 );
+export interface CommentRevision { id: string; body: string; author: Author; at: string; basedOn?: string }
+export interface ReviewComment {
+  id: string;
+  body: string;
+  author: Author;
+  at: string;
+  revisions: CommentRevision[];
+}
 export interface ReviewThread {
   id: string;
   anchor: Anchor;
-  comments: Array<{ id: string; body: string; author: Author; at: string }>;
+  comments: ReviewComment[];
   resolved: boolean;
 }
 
@@ -28,7 +37,7 @@ export function parseEvent(text: string): ReviewEvent {
   if (!e || e.version !== 1 || !uuid.test(e.id) || !uuid.test(e.threadId) || !Number.isSafeInteger(e.clock) || e.clock < 1 ||
       typeof e.at !== 'string' || !Number.isFinite(Date.parse(e.at)) || !e.author ||
       typeof e.author.name !== 'string' || typeof e.author.email !== 'string') { return bad(); }
-  if (e.type === 'create' || e.type === 'reply') {
+  if (e.type === 'create' || e.type === 'reply' || e.type === 'edit') {
     if (typeof e.body !== 'string' || !e.body.trim() || e.body.length > 100_000) { return bad(); }
   }
   if (e.type === 'create') {
@@ -42,6 +51,8 @@ export function parseEvent(text: string): ReviewEvent {
         !Number.isSafeInteger(a.occurrences) || a.occurrences < 1) { return bad(); }
   } else if (e.type === 'state') {
     if (typeof e.resolved !== 'boolean') { return bad(); }
+  } else if (e.type === 'edit') {
+    if (!uuid.test(e.commentId) || !uuid.test(e.basedOn)) { return bad(); }
   } else if (e.type !== 'reply') { return bad(); }
   return e as ReviewEvent;
 }
@@ -49,6 +60,8 @@ export function parseEvent(text: string): ReviewEvent {
 export function materialize(events: ReviewEvent[]): ReviewThread[] {
   const ordered = [...events].sort((a, b) => a.clock - b.clock || a.id.localeCompare(b.id, 'en'));
   const threads = new Map<string, ReviewThread>();
+  const comments = new Map<string, { threadId: string; comment: ReviewComment }>();
+  const applied = new Map<string, ReviewEvent>();
   for (const e of ordered) {
     if (e.type === 'create') { threads.set(e.id, { id: e.id, anchor: e.anchor, comments: [], resolved: false }); }
   }
@@ -56,7 +69,22 @@ export function materialize(events: ReviewEvent[]): ReviewThread[] {
     const thread = threads.get(e.threadId);
     if (!thread) { throw new Error('A GiTex comment references a missing thread.'); }
     if (e.type === 'state') { thread.resolved = e.resolved; }
-    else { thread.comments.push({ id: e.id, body: e.body, author: e.author, at: e.at }); }
+    else if (e.type === 'edit') {
+      const target = comments.get(e.commentId);
+      const base = applied.get(e.basedOn);
+      if (!target || target.threadId !== e.threadId || !base || base.clock >= e.clock ||
+          !target.comment.revisions.some(revision => revision.id === e.basedOn)) {
+        throw new Error('A GiTex edit references an invalid comment or revision.');
+      }
+      target.comment.body = e.body;
+      target.comment.revisions.push({ id: e.id, body: e.body, author: e.author, at: e.at, basedOn: e.basedOn });
+    } else {
+      const revision = { id: e.id, body: e.body, author: e.author, at: e.at };
+      const comment = { ...revision, revisions: [revision] };
+      thread.comments.push(comment);
+      comments.set(e.id, { threadId: e.threadId, comment });
+    }
+    applied.set(e.id, e);
   }
   return [...threads.values()];
 }
