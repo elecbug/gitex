@@ -186,10 +186,42 @@ function approximate(anchor: Anchor, document: string[]): Location {
 // Keep structural LaTeX and comments out of sentence identity. Inline macros remain
 // part of the saved text; a wrapped sentence is stored independently of line breaks.
 function structural(line: string): boolean {
-  return /^\s*(?:\\(?:begin|end|(?:sub)*section|chapter|part|label|documentclass|usepackage|include|input)\b|\\[\[\]]|\$\$|%)/u.test(line);
+  return /^\s*(?:\\(?:begin|end|(?:sub)*section|(?:sub)?paragraph|chapter|part|label|documentclass|usepackage|include|input)\b|\\[\[\]]|\$\$|%)/u.test(line);
 }
-function proseLine(line: string): string { return normalize(line.replace(/(?<!\\)%.*/u, '')); }
-type Sentence = { text: string; start: number; end: number; startLine: number; endLine: number };
+function proseLine(line: string): string {
+  // A control symbol consumes its next character: \% is text, but \\ followed
+  // by % starts a comment. A negative lookbehind cannot distinguish those cases.
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '\\') { i++; }
+    else if (line[i] === '%') { return normalize(line.slice(0, i)); }
+  }
+  return normalize(line);
+}
+
+/** A named heading is useful context; the command name alone is not evidence. */
+function headingTitle(text: string): string | undefined {
+  const command = /^\\(?:(?:sub){0,2}section|(?:sub)?paragraph|chapter|part)\*?\s*/u.exec(text);
+  if (!command) { return undefined; }
+  let at = command[0].length;
+  const group = (open: string, close: string): string | undefined => {
+    if (text[at] !== open) { return undefined; }
+    const start = ++at;
+    let depth = 1;
+    for (; at < text.length; at++) {
+      if (text[at] === '\\') { at++; }
+      else if (text[at] === open) { depth++; }
+      else if (text[at] === close && --depth === 0) { return text.slice(start, at++); }
+    }
+    return undefined;
+  };
+  if (text[at] === '[' && group('[', ']') === undefined) { return undefined; }
+  while (/\s/u.test(text[at] ?? '') && at < text.length) { at++; }
+  const title = group('{', '}');
+  if (title === undefined || !/^(?:\s*\\label\{[^{}]*\})*\s*$/u.test(text.slice(at))) { return undefined; }
+  return normalize(title.replace(/\\[a-zA-Z]+\*?/gu, '').replace(/[{}]/gu, '').replace(/~|\\ /gu, ' '));
+}
+
+type Sentence = { text: string; start: number; end: number; startLine: number; endLine: number; heading?: string };
 function sentenceIndex(document: string[]) {
   const normalized = document.map(proseLine);
   const offsets: number[] = [];
@@ -220,7 +252,13 @@ function sentenceIndex(document: string[]) {
     }
   };
   for (let i = 0; i <= document.length; i++) {
-    if (i === document.length || !normalized[i] || structural(document[i])) { flush(i); first = i + 1; }
+    if (i === document.length || !normalized[i] || structural(document[i])) {
+      flush(i); first = i + 1;
+      const heading = i < document.length ? headingTitle(normalized[i]) : undefined;
+      if (heading && normalized[i].length <= MAX_CONTEXT_LENGTH) {
+        sentences.push({ text: normalized[i], start: offsets[i], end: offsets[i] + normalized[i].length, startLine: i, endLine: i, heading });
+      }
+    }
   }
   return { text, sentences, lineAt };
 }
@@ -230,12 +268,12 @@ function surroundingSentences(document: string[], start: number, end: number): {
   // consume its following context. Never store selected text as its own context.
   const first = Math.max(0, start - 64);
   const previous = document.slice(first, start);
-  const complete = (sentence: Sentence) => /[.!?。！？]["'”’)}\]]*$/u.test(sentence.text);
+  const complete = (sentence: Sentence) => sentence.heading !== undefined || /[.!?。！？]["'”’)}\]]*$/u.test(sentence.text);
   const boundary = first === 0 || !proseLine(document[first - 1]) || structural(document[first - 1]) ||
     /[.!?。！？]["'”’)}\]]*$/u.test(proseLine(document[first - 1]));
   const before = sentenceIndex(previous).sentences.filter(sentence => complete(sentence) &&
-    (boundary || sentence.startLine > 0) && previous.length - sentence.endLine <= 12).at(-1);
-  const after = sentenceIndex(document.slice(end + 1, end + 65)).sentences.find(sentence => complete(sentence) && sentence.startLine < 12);
+    (boundary || sentence.startLine > 0 || sentence.heading !== undefined)).at(-1);
+  const after = sentenceIndex(document.slice(end + 1, end + 65)).sentences.find(complete);
   return { before: before?.text ?? '', after: after?.text ?? '' };
 }
 
@@ -248,6 +286,10 @@ function sentenceEvidence(anchor: Anchor, document: string[], start: number, end
 }
 
 function distinctive(text: string): boolean {
+  const title = headingTitle(text);
+  if (title !== undefined) {
+    return (title.match(/\p{L}/gu)?.length ?? 0) >= (/[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(title) ? 2 : 4);
+  }
   const prose = text.replace(/\\[a-zA-Z]+\*?(?:\[[^\]]*\])?/gu, '').replace(/[{}$\d]/gu, '');
   const words = prose.match(/\p{L}{2,}/gu) ?? [];
   return (new Set(words.map(word => word.toLowerCase())).size >= 4 && words.join('').length >= 18) ||
@@ -256,17 +298,20 @@ function distinctive(text: string): boolean {
 
 function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
   // Older anchors use their actual saved lines, never context invented from today's document.
-  const saved = anchor.sentenceContext ?? {
-    before: normalize(anchor.before.filter(line => !structural(line)).map(proseLine).join(' ')),
-    after: normalize(anchor.after.filter(line => !structural(line)).map(proseLine).join(' '))
+  const legacy = surroundingSentences([...anchor.before, '', ...anchor.after], anchor.before.length, anchor.before.length);
+  const saved = {
+    before: anchor.sentenceContext?.before || legacy.before || normalize(anchor.before.filter(line => !structural(line)).map(proseLine).join(' ')),
+    after: anchor.sentenceContext?.after || legacy.after || normalize(anchor.after.filter(line => !structural(line)).map(proseLine).join(' '))
   };
   if (!distinctive(saved.before) || !distinctive(saved.after) || saved.before === saved.after ||
+      (headingTitle(saved.before) !== undefined && headingTitle(saved.after) !== undefined) ||
       saved.before.length > MAX_CONTEXT_LENGTH || saved.after.length > MAX_CONTEXT_LENGTH) { return undefined; }
   const index = sentenceIndex(document);
   type Match = { start: number; end: number; score: number };
   const budget = { remaining: 4_000_000 };
   const find = (text: string): Match[] => {
     const found: Match[] = [];
+    const title = headingTitle(text);
     for (let at = index.text.indexOf(text); at !== -1; at = index.text.indexOf(text, at + 1)) {
       if ((at === 0 || /\s/u.test(index.text[at - 1])) &&
           (at + text.length === index.text.length || /\s/u.test(index.text[at + text.length]))) {
@@ -274,12 +319,15 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
         if (found.length > 32) { return []; } // Repetitive context is not identifying evidence.
       }
     }
-    const rough = index.sentences.map(sentence => ({ ...sentence, score: dice(text, sentence.text) }))
+    // Compare titles, not shared \section syntax; unrelated short titles must not
+    // look similar merely because their command names match.
+    const rough = index.sentences.filter(sentence => (title !== undefined) === (sentence.heading !== undefined))
+      .map(sentence => ({ ...sentence, score: dice(title ?? text, sentence.heading ?? sentence.text) }))
       .filter(sentence => sentence.score >= 0.65 && !found.some(match => match.start < sentence.end && match.end > sentence.start))
       .sort((a, b) => b.score - a.score);
     if (rough.length > 64) { return []; }
     for (const sentence of rough) {
-      const score = similarity(text, sentence.text, budget);
+      const score = similarity(title ?? text, sentence.heading ?? sentence.text, budget);
       if (score >= 0.86) { found.push({ start: sentence.start, end: sentence.end, score }); }
     }
     return found;
@@ -293,8 +341,9 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
     for (const right of after) {
       const gap = right.start - left.end;
       const leftLine = index.lineAt(left.end - 1), rightLine = index.lineAt(right.start);
-      if (gap < 0 || gap > maxGap || rightLine - leftLine > maxLines ||
-          document.slice(leftLine + 1, rightLine).some(structural)) { continue; }
+      const between = document.slice(leftLine + 1, rightLine);
+      if (gap < 0 || gap > maxGap || between.filter(line => proseLine(line)).length > maxLines ||
+          between.some(structural)) { continue; }
       candidates.push({ estimatedLine: Math.min(leftLine + 1, rightLine),
         confidence: (left.score + right.score) / 2 - 0.1 * gap / maxGap, start: left.start, end: right.end });
     }

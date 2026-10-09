@@ -192,3 +192,80 @@ test('bounded sentence capture does not save a clipped tail as a complete senten
   const anchor = createAnchor('main.tex', [...long, target, following].join('\n'), 70, 70, null);
   assert.deepEqual(anchor.sentenceContext, { before: '', after: following });
 });
+
+const koreanHeading = String.raw`\section*{작은 생각}`;
+const koreanParagraph = '오늘은 바람이 살랑이고, 창밖의 구름은 천천히 흘러간다. 따뜻한 차 한 잔과 함께 잠시 쉬어 가도 좋겠다.';
+const nextParagraph = '다음 날에는 새로운 실험 결과를 자세하게 살펴봅니다.';
+
+test('named LaTeX headings and the next nonblank paragraph provide context for the reported Korean example', () => {
+  for (const blanks of [1, 15, 40]) {
+    const original = [koreanHeading, koreanParagraph, ...Array(blanks).fill(''), nextParagraph].join('\n');
+    const anchor = createAnchor('main.tex', original, 1, 1, null);
+    assert.deepEqual(anchor.sentenceContext, { before: koreanHeading, after: nextParagraph });
+    const location = locateAnchor(anchor, original.replace(koreanParagraph + '\n', ''));
+    assert.equal(location.kind, 'uncertain');
+    if (location.kind === 'uncertain') { assert.equal(location.estimatedLine, 1); }
+    assert.equal(locateAnchor(anchor, original.replace('따뜻한 차', '따뜻한 녹차')).kind, 'attached');
+  }
+});
+
+test('headings support stars, optional short titles, nested formatting and labels', () => {
+  for (const heading of [
+    String.raw`\section*{작은 생각}`,
+    String.raw`\subsection[Short]{A distinctive research question}`,
+    String.raw`\chapter{A \textbf{distinctive} research question}\label{chap:question}`,
+    String.raw`\paragraph*{A distinctive research question}`
+  ]) {
+    const original = `${heading}\n${target}\n\n${following}`;
+    const anchor = createAnchor('main.tex', original, 1, 1, null);
+    assert.equal(anchor.sentenceContext!.before, heading);
+    assert.equal(locateAnchor(anchor, original.replace(target + '\n', '')).kind, 'uncertain');
+  }
+});
+
+test('heading matching uses title identity instead of shared command syntax', () => {
+  const anchor = createAnchor('main.tex', `${koreanHeading}\n${koreanParagraph}\n\n${nextParagraph}`, 1, 1, null);
+  assert.equal(locateAnchor(anchor, `\\section{작은 생각}\\label{sec:new}\n\n${nextParagraph}`).kind, 'uncertain');
+  assert.equal(locateAnchor(anchor, `\\section*{다른 이야기}\n\n${nextParagraph}`).kind, 'outdated');
+  const duplicate = `${koreanHeading}\n\n${nextParagraph}\n`;
+  assert.equal(locateAnchor(anchor, duplicate.repeat(2)).kind, 'outdated');
+  assert.equal(locateAnchor(anchor, koreanHeading).kind, 'outdated', 'a heading alone cannot estimate a deleted passage');
+});
+
+test('empty sentence fields from 0.8.0 recover available heading context without rewriting history', () => {
+  const created = createAnchor('main.tex', `${koreanHeading}\n${koreanParagraph}\n\n${nextParagraph}`, 1, 1, null);
+  const old = { ...created, sentenceContext: { before: '', after: nextParagraph } };
+  const snapshot = structuredClone(old);
+  assert.equal(locateAnchor(old, `${koreanHeading}\n\n${nextParagraph}`).kind, 'uncertain');
+  assert.deepEqual(old, snapshot);
+  const { sentenceContext, ...legacy } = old;
+  assert.equal(locateAnchor(legacy, `${koreanHeading}\n\n${nextParagraph}`).kind, 'uncertain');
+  assert.equal(locateAnchor({ ...old, before: [], after: [], sentenceContext: { before: '', after: '' } },
+    `${koreanHeading}\n\n${nextParagraph}`).kind, 'outdated', 'missing historical context is not invented from the current file');
+});
+
+test('blank lines on either side are skipped within the bounded context search', () => {
+  const original = [preceding, ...Array(15).fill(''), target, ...Array(15).fill(''), following].join('\n');
+  const anchor = createAnchor('main.tex', original, 16, 16, null);
+  assert.deepEqual(anchor.sentenceContext, { before: preceding, after: following });
+  assert.equal(locateAnchor(anchor, original.replace(target + '\n', '')).kind, 'uncertain');
+  const beyondLimit = `${koreanHeading}\n${target}\n${'\n'.repeat(65)}${following}`;
+  assert.equal(createAnchor('main.tex', beyondLimit, 1, 1, null).sentenceContext!.after, '');
+});
+
+test('bare LaTeX structure and two headings do not replace identifying prose context', () => {
+  for (const heading of [String.raw`\begin{figure}`, String.raw`\end{figure}`, String.raw`\label{sec:example}`, String.raw`\section*{}`]) {
+    const original = `${heading}\n${target}\n\n${following}`;
+    assert.equal(locateAnchor(createAnchor('main.tex', original, 1, 1, null), original.replace(target + '\n', '')).kind, 'outdated');
+  }
+  const original = `${koreanHeading}\n${target}\n\\section{또 다른 생각}`;
+  assert.equal(locateAnchor(createAnchor('main.tex', original, 1, 1, null), original.replace(target + '\n', '')).kind, 'outdated');
+});
+
+test('escaped percent signs survive while comments after LaTeX line breaks are excluded', () => {
+  const before = String.raw`The measured improvement is 15\% across the complete validation dataset.`;
+  const after = String.raw`Further measurements confirm the observed result. \\% This commented sentence must not be saved.`;
+  const anchor = createAnchor('main.tex', `${before}\n${target}\n${after}`, 1, 1, null);
+  assert.equal(anchor.sentenceContext!.before, before);
+  assert.equal(anchor.sentenceContext!.after, 'Further measurements confirm the observed result.');
+});

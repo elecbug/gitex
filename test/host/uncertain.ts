@@ -104,10 +104,30 @@ export async function uncertainTests(app: any, store: ReviewStore): Promise<void
     assert.deepEqual(moved.anchor.selected, [after]);
     assert.deepEqual(moved.anchorHistory.at(-1)!.from, review.anchor);
     assert.equal(moved.anchorHistory.at(-1)!.kind, 'move');
+
+    const heading = String.raw`\section*{작은 생각}`;
+    const paragraph = '오늘은 바람이 살랑이고, 창밖의 구름은 천천히 흘러간다. 따뜻한 차 한 잔과 함께 잠시 쉬어 가도 좋겠다.';
+    const following = '다음 날에는 새로운 실험 결과를 자세하게 살펴봅니다.';
+    const latex = [heading, paragraph, ...Array(15).fill(''), following].join('\n');
+    await setText(latex);
+    editor.selection = new vscode.Selection(1, 0, 1, paragraph.length);
+    await app.addComment('Track Korean prose below a LaTeX heading');
+    const latexReview = (await store.threads()).find(thread => thread.comments[0].body === 'Track Korean prose below a LaTeX heading')!;
+    assert.deepEqual(latexReview.anchor.sentenceContext, { before: heading, after: following });
+    await setText(latex.replace(paragraph + '\n', ''));
+    const latexItem = app.getChildren().find((item: any) => item.review.id === latexReview.id);
+    assert.equal(latexItem.location.kind, 'uncertain');
+    assert.match(app.nativeThreads.get(latexItem.key).label, /Uncertain/);
+    await app.reviewThread(latexItem);
+    await until(async () => (await view.locator('.passage-content pre').textContent()) === paragraph, 'Korean saved reference');
+    assert.ok((await view.locator('.passage .surroundings').textContent())!.includes(heading));
+    assert.ok((await view.locator('.passage .surroundings').textContent())!.includes(following));
+    assert.deepEqual((await store.threads()).find(thread => thread.id === latexReview.id)!.anchor, latexReview.anchor);
+
     assert.equal(await store.head(), head); assert.equal(await store.git.text(['write-tree']), index);
     assert.equal(await store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']), remote);
     assert.ok(document.isDirty);
-    console.log('GiTex context tracking: uncertain editor marker, saved sentences, source navigation, no automatic rebasing, resolve, outdated recovery and recorded manual reconnection passed.');
+    console.log('GiTex context tracking: uncertain editor marker, saved sentences, source navigation, no automatic rebasing, resolve, outdated recovery, manual reconnection, LaTeX headings and blank-line context passed.');
   } finally {
     for (const panel of app.panels.values()) { panel.dispose(); }
     await browser.close();
