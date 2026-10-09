@@ -37,6 +37,78 @@ test('whitespace and rewrapping can change the number of matched lines', () => {
   assert.deepEqual(locateAnchor(wrapped, original), { kind: 'attached', startLine: 1, endLine: 1, similarity: 1 });
 });
 
+test('appending a long suffix preserves an exact prefix without a length penalty', () => {
+  const passage = 'Our method improves accuracy on the evaluation dataset.';
+  const anchor = createAnchor('main.tex', `Before\n${passage}\nAfter`, 1, 1, null);
+  for (const tail of [' Extra detail.', ' Extra detail.'.repeat(4000)]) {
+    assert.deepEqual(locateAnchor(anchor, `Before\n${passage}${tail}\nAfter`),
+      { kind: 'attached', startLine: 1, endLine: 1, similarity: 1 });
+  }
+});
+
+test('only edits within the original passage count when a suffix is appended', () => {
+  for (const [original, edited] of [
+    ['Our method improves accuracy on the evaluation dataset.', 'Our method improves precision on the evaluation dataset.'],
+    ['Our method improves accuracy on the evaluation dataset.', 'Our method improves prediction accuracy on the evaluation dataset.'],
+    ['Our method improves prediction accuracy on the evaluation dataset.', 'Our method improves accuracy on the evaluation dataset.'],
+    ['We use $x_i$ to compute the final result.', 'We use $x_j$ to compute the final result.'],
+    ['실험 결과는 제안한 방법의 높은 정확도를 보여줍니다.', '실험 결과는 제안한 방법의 더 높은 정확도를 보여줍니다.']
+  ]) {
+    const anchor = createAnchor('main.tex', `Before\n${original}\nAfter`, 1, 1, null);
+    const plain = locateAnchor(anchor, `Before\n${edited}\nAfter`);
+    const extended = locateAnchor(anchor, `Before\n${edited} We also report additional measurements and discuss their implications.\nAfter`);
+    assert.equal(plain.kind, 'attached');
+    assert.deepEqual(extended, plain, 'suffix length must not dilute the score for substitutions, insertions or deletions');
+    if (extended.kind === 'attached') { assert.ok(extended.similarity! < 1, 'internal edits are still charged'); }
+  }
+});
+
+test('prefix alignment maps wrapped text to its own lines without swallowing suffix-only lines', () => {
+  const passage = 'Our method improves accuracy on the evaluation dataset.';
+  const anchor = createAnchor('main.tex', `Before\n${passage}\nAfter`, 1, 1, null);
+  const location = locateAnchor(anchor, 'Before\nOur method improves prediction accuracy\non the evaluation dataset.\n' +
+    'An appended sentence describes additional independent experimental measurements.\nAfter');
+  assert.equal(location.kind, 'attached');
+  if (location.kind === 'attached') { assert.equal(location.startLine, 1); assert.equal(location.endLine, 2); }
+  const inline = locateAnchor(anchor, 'Before\nOur method improves prediction accuracy\non the evaluation dataset. Extra measurements follow.\nAfter');
+  assert.equal(inline.kind, 'attached');
+  if (inline.kind === 'attached') { assert.equal(inline.endLine, 2); }
+});
+
+test('unrelated prefixes and reordered text cannot hide behind an appended suffix', () => {
+  const passage = 'The method increases precision while reducing latency.';
+  const anchor = createAnchor('main.tex', `Before\n${passage}\nAfter`, 1, 1, null);
+  for (const text of [
+    `A completely unrelated introduction about the history of medieval architecture. ${passage}`,
+    'latency. reducing while precision increases method The More observations follow.',
+    'The experiment measures rainfall in coastal ecosystems. ' + passage
+  ]) {
+    assert.notEqual(locateAnchor(anchor, `Before\n${text}\nAfter`).kind, 'attached');
+  }
+});
+
+test('appended copies remain ambiguous and matching context can distinguish them', () => {
+  const passage = 'Our method improves accuracy on the evaluation dataset.';
+  const anchor = createAnchor('main.tex', `A section\n${passage}\nEnd A`, 1, 1, null);
+  const edited = passage.replace('accuracy', 'prediction accuracy');
+  const first = `A section\n${edited} Additional measurements are reported for completeness.\nEnd A`;
+  const second = `A section\n${edited} A different long suffix discusses independent measurements.\nEnd A`;
+  assert.notEqual(locateAnchor(anchor, `${first}\n\n${second}`).kind, 'attached');
+  const location = locateAnchor(anchor, `${first.replace('A section', 'B section').replace('End A', 'End B')}\n\n${second}`);
+  assert.equal(location.kind, 'attached');
+  if (location.kind === 'attached') { assert.equal(location.startLine, 5); }
+});
+
+test('short exact prefixes require a word boundary before ignored appended text', () => {
+  for (const [original, longerWord, appended] of [['cat', 'catalog', 'cat and another observation'], ['헬로', '헬로월드', '헬로 랄랄루']]) {
+    const anchor = createAnchor('main.tex', `Before\n${original}\nAfter`, 1, 1, null);
+    assert.notEqual(locateAnchor(anchor, `Before\n${longerWord}\nAfter`).kind, 'attached');
+    const location = locateAnchor(anchor, `Before\n${appended}\nAfter`);
+    assert.equal(location.kind, 'attached');
+    if (location.kind === 'attached') { assert.equal(location.similarity, 1); }
+  }
+});
+
 test('small LaTeX and Korean edits preserve order-sensitive matches', () => {
   for (const [before, after] of [
     ['We use $x_i$ to compute the final result.', 'We use $x_j$ to compute the final result.'],
@@ -147,6 +219,15 @@ test('context-only matches tolerate sentence rewrapping and small edits on both 
   const location = locateAnchor(anchor, changed);
   assert.equal(location.kind, 'uncertain');
   if (location.kind === 'uncertain') { assert.equal(location.estimatedLine, 2); }
+});
+
+test('edited context sentences with appended explanations still estimate a deleted passage', () => {
+  const anchor = createAnchor('main.tex', contextPaper, 1, 1, null);
+  const left = preceding.replace('protocol', 'protocols').replace(/\.$/, ', including additional experiments and independent measurements for every configuration.');
+  const right = following.replace('needed', 'required').replace(/\.$/, ', including a discussion of additional evidence and independent measurement conditions.');
+  const location = locateAnchor(anchor, `${left}\n${right}`);
+  assert.equal(location.kind, 'uncertain');
+  if (location.kind === 'uncertain') { assert.equal(location.estimatedLine, 1); assert.equal(location.insertionLine, 1); }
 });
 
 test('complete sentence evidence follows passages when context is rewrapped beyond three lines', () => {

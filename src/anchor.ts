@@ -116,25 +116,45 @@ function dice(a: string, b: string): number {
   return 2 * common / Math.max(1, a.length + b.length - 2);
 }
 
-// Bounded edit distance is used only for the best inexpensive candidate matches.
-function similarity(a: string, b: string, budget: { remaining: number }): number {
-  if (a === b) { return 1; }
-  const limit = Math.floor(Math.max(a.length, b.length) * 0.28);
-  if (Math.abs(a.length - b.length) > limit) { return 0; }
-  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+function roughSimilarity(a: string, b: string, allowAppend = false): number {
+  if (!allowAppend || b.length <= a.length) { return dice(a, b); }
+  // The cheap shortlist must not penalize the suffix that alignment will ignore.
+  return Math.max(dice(a, b.slice(0, a.length)), dice(a, b.slice(0, Math.floor(a.length / 0.72))));
+}
+
+// Align the entire reference, optionally allowing an uncharged suffix on a longer
+// candidate. Leading/internal edits still cost distance; this is not substring search.
+function similarity(a: string, b: string, budget: { remaining: number }, allowAppend = false): { score: number; length: number } {
+  const missing = { score: 0, length: b.length };
+  if (a === b) { return { score: 1, length: b.length }; }
+  const append = allowAppend && b.length > a.length;
+  const endpoint = (length: number) => !append || a.length >= 16 || length === b.length ||
+    !/[\p{L}\p{N}]/u.test(b[length - 1]) || !/[\p{L}\p{N}]/u.test(b[length]);
+  if (append && b.startsWith(a) && endpoint(a.length)) { return { score: 1, length: a.length }; }
+  const limit = Math.floor((append ? a.length / 0.72 : Math.max(a.length, b.length)) * 0.28);
+  if (!append && Math.abs(a.length - b.length) > limit) { return missing; }
+  const width = append ? Math.min(b.length, a.length + limit) : b.length;
+  let previous = Array.from({ length: width + 1 }, (_, i) => i);
   for (let i = 1; i <= a.length; i++) {
-    const next = new Array<number>(b.length + 1).fill(limit + 1);
+    const next = new Array<number>(width + 1).fill(limit + 1);
     next[0] = i;
     let minimum = next[0];
-    for (let j = Math.max(1, i - limit); j <= Math.min(b.length, i + limit); j++) {
-      if (--budget.remaining < 0) { return 0; }
+    for (let j = Math.max(1, i - limit); j <= Math.min(width, i + limit); j++) {
+      if (--budget.remaining < 0) { return missing; }
       next[j] = Math.min(previous[j] + 1, next[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
       minimum = Math.min(minimum, next[j]);
     }
-    if (minimum > limit) { return 0; }
+    if (minimum > limit) { return missing; }
     previous = next;
   }
-  return 1 - previous[b.length] / Math.max(a.length, b.length);
+  if (!append) { return { score: 1 - previous[b.length] / Math.max(a.length, b.length), length: b.length }; }
+  let best = missing;
+  for (let length = Math.max(1, a.length - limit); length <= width; length++) {
+    if (previous[length] > limit || !endpoint(length)) { continue; }
+    const score = 1 - previous[length] / Math.max(a.length, length);
+    if (score > best.score) { best = { score, length }; }
+  }
+  return best;
 }
 
 function approximate(anchor: Anchor, document: string[]): Location {
@@ -165,24 +185,38 @@ function approximate(anchor: Anchor, document: string[]): Location {
   type Candidate = { start: number; end: number; text: string; context: number; rank: number; similarity: number };
   let candidates: Candidate[] = [];
   const maximumLines = Math.max(12, anchor.selected.length * 2 + 6);
+  const maximumText = Math.floor(selected.length / 0.72) + 1;
+  const matchedEnd = (start: number, end: number, length: number): number => {
+    let consumed = 0;
+    for (let line = start; line <= end; line++) {
+      if (!normalized[line]) { continue; }
+      consumed += (consumed ? 1 : 0) + normalized[line].length;
+      if (consumed >= length) { return line; }
+    }
+    return end;
+  };
   for (let start = 0; start < normalized.length; start++) {
     if (!normalized[start]) { continue; }
     let text = '';
     for (let end = start; end < Math.min(normalized.length, start + maximumLines); end++) {
-      if (normalized[end]) { text += (text ? ' ' : '') + normalized[end]; }
-      if (text.length > selected.length / 0.72) { break; }
+      if (normalized[end]) { text = (text + (text ? ' ' : '') + normalized[end].slice(0, maximumText)).slice(0, maximumText); }
       if (!normalized[end] || text.length < selected.length * 0.72) { continue; }
-      const rough = dice(selected, text);
-      if (rough < 0.5) { continue; }
-      const surroundings = context(start, end);
-      candidates.push({ start, end, text, context: surroundings, rank: rough * 0.8 + surroundings * 0.2, similarity: 0 });
-      if (candidates.length > 128) { candidates.sort((a, b) => b.rank - a.rank); candidates.length = 64; }
+      const rough = roughSimilarity(selected, text, true);
+      if (rough >= 0.5) {
+        const surroundings = context(start, matchedEnd(start, end, Math.min(selected.length, text.length)));
+        candidates.push({ start, end, text, context: surroundings, rank: rough * 0.8 + surroundings * 0.2, similarity: 0 });
+        if (candidates.length > 128) { candidates.sort((a, b) => b.rank - a.rank); candidates.length = 64; }
+      }
+      if (text.length >= maximumText) { break; }
     }
   }
   candidates.sort((a, b) => b.rank - a.rank);
   const budget = { remaining: 8_000_000 };
   candidates = candidates.slice(0, 64).filter(candidate => {
-    candidate.similarity = similarity(selected, candidate.text, budget);
+    const match = similarity(selected, candidate.text, budget, true);
+    candidate.similarity = match.score;
+    candidate.end = matchedEnd(candidate.start, candidate.end, match.length);
+    candidate.context = context(candidate.start, candidate.end);
     candidate.rank = candidate.similarity * 0.8 + candidate.context * 0.2;
     const threshold = selected.length < 16 ? (candidate.context >= 0.5 ? 0.85 : 0.95) :
       candidate.context >= 0.35 ? 0.74 : 0.86;
@@ -388,12 +422,12 @@ function contextOnly(anchor: Anchor, document: string[]): Location | undefined {
     // Compare titles, not shared \section syntax; unrelated short titles must not
     // look similar merely because their command names match.
     const rough = index.sentences.filter(sentence => (title !== undefined) === (sentence.heading !== undefined))
-      .map(sentence => ({ ...sentence, score: dice(title ?? text, sentence.heading ?? sentence.text) }))
+      .map(sentence => ({ ...sentence, score: roughSimilarity(title ?? text, sentence.heading ?? sentence.text, title === undefined) }))
       .filter(sentence => sentence.score >= 0.65 && !found.some(match => match.start < sentence.end && match.end > sentence.start))
       .sort((a, b) => b.score - a.score);
     if (rough.length > 64) { ambiguousContext = true; return []; }
     for (const sentence of rough) {
-      const score = similarity(title ?? text, sentence.heading ?? sentence.text, budget);
+      const { score } = similarity(title ?? text, sentence.heading ?? sentence.text, budget, title === undefined);
       if (score >= 0.86) { found.push({ start: sentence.start, end: sentence.end, score }); }
     }
     return found;

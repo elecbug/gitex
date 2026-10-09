@@ -44,6 +44,21 @@ test('gradual source edits use recent reliable text while the original snapshot 
   assert.deepEqual(anchor.selected, [selected]);
 });
 
+test('appended passages renew local hints without rewriting the saved reference', () => {
+  const tracker = new LocalTracking();
+  const original = structuredClone(anchor);
+  tracker.locate(key, anchor, revision, paper);
+  const extended = selected.replace('accuracy', 'precision') + ' Additional measurements cover independent test conditions and longer evaluation periods.';
+  const updated = `${recentBefore}\n${extended}\n${recentAfter}`;
+  assert.equal(tracker.locate(key, anchor, revision, updated).kind, 'attached');
+  assert.deepEqual(tracker.get(key, revision)!.anchor.selected, [extended]);
+  assert.deepEqual(anchor, original);
+  const latest = structuredClone(tracker.get(key, revision));
+  const location = tracker.locate(key, anchor, revision, deleted);
+  assert.equal(location.kind, 'uncertain'); assert.equal(location.source, 'local');
+  assert.deepEqual(tracker.get(key, revision), latest);
+});
+
 test('uncertain and conflicting results never become new local reference snapshots', () => {
   const tracker = new LocalTracking();
   tracker.locate(key, anchor, revision, recent);
