@@ -23,6 +23,31 @@ A VS Code extension for sharing line comments on LaTeX papers through Git. Use i
 
 Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Sync Comments** and automatic sync after saving both receive and publish review data. They leave your working files, current branch, and staging area unchanged.
 
+## Architecture and collaboration flow
+
+Each collaborator edits a local working copy in VS Code. A shared Git remote stores both the paper and its review history, with separate branches for each. The diagram shows User A writing the paper and User B reviewing it; both users can perform either role.
+
+![GiTex architecture: two VS Code users exchange LaTeX documents through the Main Branch and review comments through the GiTex Branch in a shared bare Git repository.](docs/images/architecture.png)
+
+Green boxes (**Edited Data**) identify data edited by the depicted user. Blue boxes (**Synced Data**) identify data received through Git from the other collaborator.
+
+| Diagram component | Role in GiTex |
+| --- | --- |
+| **Git Bare Repository** | The shared remote, hosted as a bare repository or on a Git hosting service such as GitHub. Each user has a local working copy. |
+| **Main Branch** | The paper's regular branch, such as `main`, containing LaTeX sources, bibliography files, and figures. Paper commits, pulls, pushes, and merges use ordinary Git or VS Code Source Control. |
+| **GiTex Branch** | The reserved remote branch `gitex-comments` (`refs/heads/gitex-comments`). It stores immutable events for comments, replies, edits, location changes, and resolved states. Local review history lives in `refs/gitex/comments`. |
+
+The collaboration cycle in the diagram works as follows:
+
+1. **Write and share the paper.** User A edits the LaTeX document locally, commits it, and pushes the paper branch.
+2. **Review the shared text.** User B pulls the paper changes and adds a GiTex comment to the relevant passage, such as the typo on line 14.
+3. **Share review events.** Saving the comment first records it locally. With automatic sync enabled, GiTex then fetches and combines remote review events and pushes the combined history to `gitex-comments` in the background.
+4. **Revise and repeat.** User A uses the **Sync Comments** button in Explorer's **GiTex Comments** view to receive shared reviews, checks the anchored passages, and revises the paper. Replies, edits, and resolved states remain in review history while paper revisions continue through the regular branch.
+
+The diagram's **“Sync comments on refresh”** means that a user explicitly refreshes shared reviews from the **GiTex Comments** view in Explorer. Its **Sync Comments** toolbar button receives remote reviews and publishes local review events. The separate **Refresh Comments** button reloads local data; **Fetch Comments** is also available as a command to receive remote reviews without publishing.
+
+Automatic sync runs once after saving a comment, reply, edit, or manual location move. See [Automatic sync after saving](#automatic-sync-after-saving) for the setting and exact triggers. The dotted review-request arrow represents coordination between collaborators, rather than a built-in notification or approval service.
+
 ## Installation and usage
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
