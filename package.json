@@ -2,8 +2,9 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed passage comments and collaboration for LaTeX papers.",
+  "icon": "media/icon.png",
   "version": "0.13.0",
-  "publisher": "gitex-local",
+  "publisher": "elecbug",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -150,7 +151,8 @@
       "explorer": [
         {
           "id": "gitex.comments",
-          "name": "GiTex Comments"
+          "name": "GiTex Comments",
+          "icon": "$(comment)"
         }
       ]
     },
