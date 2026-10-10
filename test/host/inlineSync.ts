@@ -40,7 +40,8 @@ export async function inlineSyncTests(app: any, store: ReviewStore): Promise<voi
   try {
     const page = browser.contexts()[0].pages().find(page => page.url().startsWith('vscode-file:'))!;
     assert.ok(page, 'VS Code workbench must be available');
-    const widget = page.locator('.review-widget').filter({ hasText: 'Local reply published by inline Sync' });
+    // The same source can be visible in two editor groups after relocation tests.
+    const widget = page.locator('.editor-group-container.active .review-widget').filter({ hasText: 'Local reply published by inline Sync' });
     await widget.waitFor({ state: 'visible' });
     const form = widget.locator('.comment-form');
     const expand = form.locator('.review-thread-reply-button');

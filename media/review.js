@@ -145,7 +145,7 @@
     const paperEntries = element('div', undefined, paperHistory, 'revision-list');
     const view = { key, root, repository, location, match, lines, contextNote, candidates, excerpt, passage, passageSummary, source, originalExcerpt,
       surroundings, surroundingsLabel, surroundingsBody, localContext, localSummary, localBody,
-      count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), moves: new Map(), error: '',
+      count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, replyForm: form, savedResolved: false, nodes: new Map(), moves: new Map(), error: '',
       trackingLabel, trackingEntries, trackingSignature: '', paperCommit, paperStatus, paperSummary, paperEntries, paperSignature: '', scroll: 0 };
     source.onclick = () => vscode.postMessage({ type: 'source', key: view.key });
     move.onclick = () => submit(view, { type: 'move' }, [move], () => {}, () => {}, move, 'Moving…');
@@ -274,7 +274,7 @@
     view.paperCommit.textContent = context.paperCommit ? 'Paper commit ' + context.paperCommit.slice(0, 12) : 'Paper not committed yet';
     view.paperCommit.title = context.paperCommit || '';
     const committed = review.paperHistory.filter(record => record.paperCommit === context.paperCommit).at(-1);
-    view.paperStatus.textContent = context.commitError || (committed ?
+    view.paperStatus.textContent = context.commitError || (context.previousReviewCommit ? 'Read-only review from paper commit ' + context.previousReviewCommit.slice(0, 12) : committed ?
       'Review version for this paper commit' +
       ' · ' + committed.status + (committed.resolved ? ' · Resolved' : ' · Open') + (committed.source === 'commit' ? '. Recorded from committed source.' : '. Includes a review saved in the working copy.') :
       'No review record for this paper commit yet.');
@@ -284,7 +284,7 @@
     view.root.dataset.location = context.location.kind;
     view.lines.textContent = uncertain ? context.location.candidates ? '2 candidate locations' : 'Estimated location · ' + estimatePosition(context.location) :
       (attached ? '' : 'Saved reference · ') + range(attached ? context.location : review.anchor);
-    view.match.textContent = pending ? context.notInherited ? 'Not inherited' : 'Pending document' : uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
+    view.match.textContent = context.notInherited ? review.resolved ? 'Not inherited' : 'Earlier unresolved' : pending ? 'Pending document' : uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
       'Similar text · ' + Math.round(context.location.similarity * 100) + '%';
     if (context.location.source === 'local') view.match.textContent += ' · Local context';
     if (uncertain && context.location.candidates) view.match.textContent += ' · 2 candidates';
@@ -324,6 +324,9 @@
     if (context.sync === 'failed') view.syncInfo.open = true;
     view.savedResolved = review.resolved;
     view.resolved.checked = review.resolved;
+    view.resolved.disabled = !!context.notInherited;
+    view.resolved.title = context.notInherited ? 'Switch to the original paper commit to resolve or reopen this review.' : '';
+    view.replyForm.hidden = !!context.notInherited;
     view.resolvedNote.hidden = !review.resolved;
     const state = document.getElementById('thread-state');
     state.hidden = false; state.textContent = review.resolved ? 'Resolved' : 'Open';

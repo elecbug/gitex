@@ -8,6 +8,7 @@ export interface ReviewContext {
   repository: string;
   reviewNotice?: string;
   notInherited?: boolean;
+  previousReviewCommit?: string;
   editableComments?: string[];
   location: Location;
   localReference?: LocalReference;

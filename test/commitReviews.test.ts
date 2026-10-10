@@ -359,11 +359,68 @@ test('late root comments and replies are disclosed without merging into a publis
   const late = await b.create(anchor, 'Late root', paper);
   await b.reply(id, 'Late reply'); await b.sync(); await a.pull();
   const notices = await a.earlierReviewUpdates(h2);
-  assert.deepEqual(notices.get(late), { commits: [h1], count: 1 });
+  assert.deepEqual(notices.get(late)!.commits, [h1]); assert.equal(notices.get(late)!.count, 1);
+  assert.equal(notices.get(late)!.previous!.paperCommit, h1);
+  assert.equal(notices.get(late)!.previous!.review.resolved, false);
   assert.deepEqual(notices.get(id), { commits: [h1], count: 1 });
   assert.equal((await view(a, h2)).comments.length, 1);
   assert.equal(reviewAtCommit((await a.threads()).find(thread => thread.id === late)!, h2), undefined);
   assert.equal((await a.earlierReviewUpdates(h1)).size, 0);
+});
+
+test('excluded unresolved reviews remain discoverable across descendants and follow resolution on their source commit', async t => {
+  const { a, b, h1, anchor, commit } = await fixture(t);
+  await a.sync(); await b.pull();
+  const h2 = await commit('Preface.\n' + paper); await a.recordPaperCommit(h2); await a.sync();
+  const late = await b.create(anchor, 'Unfinished earlier review', paper); await b.sync(); await a.pull();
+  const h3 = await commit('Another preface.\nPreface.\n' + paper); await a.recordPaperCommit(h3); await a.sync();
+  const tip = await a.git.ref(LOCAL_REF);
+  let notice = (await a.earlierReviewUpdates(h3)).get(late)!;
+  assert.equal(notice.previous!.paperCommit, h1); assert.equal(notice.previous!.review.resolved, false);
+  assert.equal(await a.git.ref(LOCAL_REF), tip, 'discovery does not create an inherited copy');
+  const global = (await a.threads()).find(thread => thread.id === late)!;
+  assert.equal(reviewAtCommit(global, h2), undefined); assert.equal(reviewAtCommit(global, h3), undefined);
+  await b.setResolved(late, true); await b.sync(); await a.pull();
+  notice = (await a.earlierReviewUpdates(h3)).get(late)!;
+  assert.equal(notice.previous!.review.resolved, true);
+  await b.setResolved(late, false); await b.sync(); await a.pull();
+  assert.equal((await a.earlierReviewUpdates(h3)).get(late)!.previous!.review.resolved, false);
+});
+
+test('earlier review content and unresolved state never borrow a future paper version', async t => {
+  const { a, b, h1, anchor, commit } = await fixture(t);
+  await a.sync(); await b.pull();
+  const text = 'Preface.\n' + paper;
+  const h2 = await commit(text); await a.recordPaperCommit(h2); await a.sync();
+  const late = await b.create(anchor, 'Original earlier body', paper); await b.sync(); await a.pull();
+  const h3 = await commit('Future.\n' + text); await a.recordPaperCommit(h3); await a.sync();
+  await a.move(late, enableEditTracking(createAnchor('main.tex', 'Future.\n' + text, 3, 3, h3), 'Future.\n' + text), late, 'Future.\n' + text, h3);
+  await a.git.text(['config', 'user.email', 'bob@test.invalid']);
+  await a.edit(late, late, 'Future body', late, undefined, undefined, undefined, h3);
+  await a.setResolved(late, true, h3);
+  assert.equal((await a.threads()).find(thread => thread.id === late)!.resolved, true);
+  const previous = (await a.earlierReviewUpdates(h2)).get(late)!.previous!;
+  assert.equal(previous.paperCommit, h1); assert.equal(previous.review.resolved, false);
+  assert.equal(previous.review.comments[0].body, 'Original earlier body');
+  await a.move(late, enableEditTracking(createAnchor('main.tex', text, 2, 2, h2), text), previous.review.anchorRevision, text, h2, h1);
+  const reconnected = reviewAtCommit((await a.threads()).find(thread => thread.id === late)!, h2)!;
+  assert.equal(reconnected.comments[0].body, 'Original earlier body', 'explicit reconnection uses the displayed earlier version');
+  assert.equal(reconnected.resolved, false);
+  assert.equal((await a.earlierReviewUpdates(h2)).get(late), undefined);
+});
+
+test('nearest resolved ancestor suppresses an older unresolved version of the same review', async t => {
+  const { a, b, h1, anchor, commit } = await fixture(t);
+  await a.sync(); await b.pull();
+  const text = 'Preface.\n' + paper;
+  const h2 = await commit(text); await a.recordPaperCommit(h2); await a.sync();
+  const h3 = await commit('Next.\n' + text); await a.recordPaperCommit(h3); await a.sync();
+  const late = await b.create(anchor, 'Late open review on H1', paper); await b.sync(); await a.pull();
+  await a.move(late, enableEditTracking(createAnchor('main.tex', text, 2, 2, h2), text), late, text, h2);
+  await a.setResolved(late, true, h2);
+  const previous = (await a.earlierReviewUpdates(h3)).get(late)!.previous!;
+  assert.equal(previous.paperCommit, h2); assert.equal(previous.review.resolved, true);
+  assert.equal(reviewAtCommit((await a.threads()).find(thread => thread.id === late)!, h1)!.resolved, false);
 });
 
 test('rebase does not borrow reviews from an unrelated rewritten commit; explicit reconnect preserves both views', async t => {

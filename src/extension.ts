@@ -14,7 +14,7 @@ import { discoverRepositories, findRepository, repositoryContaining, within } fr
 
 interface Repository { store: ReviewStore; folder: vscode.WorkspaceFolder }
 class SnapshotSharingPending extends Error {}
-interface ThreadItem { reviewNotice?: string; notInherited?: boolean; key: string; repository: Repository; review: ReviewThread; uri: vscode.Uri; location: Location; paperCommit?: string | null }
+interface ThreadItem { reviewNotice?: string; notInherited?: boolean; previousReviewCommit?: string; key: string; repository: Repository; review: ReviewThread; uri: vscode.Uri; location: Location; paperCommit?: string | null }
 interface NativeReviewComment extends vscode.Comment {
   commentId: string;
   threadKey: string;
@@ -513,9 +513,9 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       for (const global of reviews) {
         let review = reviewAtCommit(global, head) ?? global;
         let paperCommit = head;
-        const uri = vscode.Uri.file(path.join(repository.store.root, review.anchor.path));
+        let uri = vscode.Uri.file(path.join(repository.store.root, review.anchor.path));
         let location: Location;
-        let reviewNotice: string | undefined, notInherited = false;
+        let reviewNotice: string | undefined, previousReviewCommit: string | undefined, notInherited = false;
         try {
           const documentKey = `${repository.store.root}:${uri.toString()}`;
           if (!documents.has(documentKey)) { documents.set(documentKey, this.document(uri, repository)); }
@@ -542,13 +542,19 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
           const notice = earlier.get(paperCommit)!.get(global.id);
           if (notice) {
             notInherited = !reviewAtCommit(global, paperCommit);
+            if (notInherited && notice.previous) {
+              review = notice.previous.review;
+              previousReviewCommit = notice.previous.paperCommit;
+              uri = vscode.Uri.file(path.join(repository.store.root, review.anchor.path));
+            }
             reviewNotice = `${notice.count} review update(s) remain on earlier paper commit(s) ${notice.commits.map(hash => hash.slice(0, 8)).join(', ')}. Published inheritance is fixed; these updates were not copied into this version. View Paper history or switch to the earlier commit to review them.`;
           }
         }
-        if (notInherited && location.kind === 'pending') {
-          location.reason = 'Not inherited · This review belongs to an earlier paper commit. Switch to that commit or explicitly move the comment to a selection in this version.';
+        if (notInherited) {
+          this.editTracking.suspend(`${repository.store.root}:${review.id}`);
+          location = { kind: 'pending', reason: `${review.resolved ? 'Not inherited' : 'Earlier unresolved'} · This review remains on earlier paper commit ${previousReviewCommit?.slice(0, 8) ?? '(see history)'}. It is shown only in Explorer and Review, not attached to the current paper. Switch to the earlier commit to reply or resolve it, or explicitly move it to a selection in this version.` };
         }
-        next.push({ key: `${repository.store.root}:${review.id}`, repository, review, uri, location, paperCommit, reviewNotice, notInherited });
+        next.push({ key: `${repository.store.root}:${review.id}`, repository, review, uri, location, paperCommit, reviewNotice, notInherited, previousReviewCommit });
       }
       // Check one immutable paper tip per repository, not two Git reads per thread.
       // A concurrent checkout invalidates this whole display pass before rendering.
@@ -610,8 +616,9 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const repository = this.activeRoot ? this.repositories.get(this.activeRoot) : undefined;
     this.tree.description = repository ? this.repositoryLabel(repository) : undefined;
     const pendingDocuments = this.getChildren().filter(item => item.location.kind === 'pending' && !item.notInherited).length;
-    const earlierUpdates = this.getChildren().filter(item => item.reviewNotice).length;
-    this.tree.message = repository ? [pendingDocuments ? `${pendingDocuments} comment(s) pending document. Pull the paper source in Source Control.` : '', earlierUpdates ? `${earlierUpdates} thread(s) have updates left on earlier commits. Open Review for details.` : ''].filter(Boolean).join(' ') || undefined : 'Open a paper file to select its Git repository. Repositories in subfolders are discovered automatically.';
+    const earlierUnresolved = this.getChildren().filter(item => item.notInherited && !item.review.resolved).length;
+    const earlierUpdates = this.getChildren().filter(item => item.reviewNotice && !item.notInherited).length;
+    this.tree.message = repository ? [pendingDocuments ? `${pendingDocuments} comment(s) pending document. Pull the paper source in Source Control.` : '', earlierUnresolved ? `${earlierUnresolved} unresolved thread(s) remain on earlier commits and are shown here only. Open Review for details.` : '', earlierUpdates ? `${earlierUpdates} thread(s) have updates left on earlier commits. Open Review for details.` : ''].filter(Boolean).join(' ') || undefined : 'Open a paper file to select its Git repository. Repositories in subfolders are discovered automatically.';
     const open = this.getChildren().filter(item => !item.review.resolved).length;
     const failed = !!this.activeRoot && this.syncErrors.has(this.activeRoot);
     this.status.text = failed ? '$(warning) GiTex · Sync pending' : `$(comment-discussion) GiTex ${open}`;
@@ -723,16 +730,16 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const location = item.location;
     const line = location.kind === 'attached' ? location.startLine + 1 : location.kind === 'uncertain' ?
       locationEstimates(location).map(estimate => `~${estimate.estimatedLine + 1}`).join(' / ') : '?';
-    const state = location.kind === 'uncertain' ? ' · Uncertain' : location.kind === 'outdated' ? ' · Outdated' : location.kind === 'pending' ? item.notInherited ? ' · Not inherited' : ' · Pending document' : location.similarity !== undefined ? ' · Similar text' : '';
+    const state = item.notInherited ? item.review.resolved ? ' · Not inherited' : ' · Earlier unresolved' : location.kind === 'uncertain' ? ' · Uncertain' : location.kind === 'outdated' ? ' · Outdated' : location.kind === 'pending' ? ' · Pending document' : location.similarity !== undefined ? ' · Similar text' : '';
     node.description = `${item.review.anchor.path}:${line}${item.review.resolved ? ' · Resolved' : ''}${state}${location.source === 'local' ? ' · Local context' : ''}`;
     const record = item.review.paperHistory.filter(record => record.paperCommit === item.paperCommit).at(-1);
     if (item.reviewNotice && !item.notInherited) { node.description += ' · Earlier updates'; }
-    node.description += item.paperCommit ? ` · ${item.paperCommit.slice(0, 8)}` : '';
+    node.description += item.previousReviewCommit ? ` · from ${item.previousReviewCommit.slice(0, 8)}` : item.paperCommit ? ` · ${item.paperCommit.slice(0, 8)}` : '';
     node.tooltip = `${first.author.name}: ${first.body}\n${location.kind !== 'attached' ? location.reason : item.review.resolved ? 'Resolved' : 'Open'}\nPaper commit: ${item.paperCommit ?? 'Not committed yet'}\n${record ? `Recorded review: ${record.at} · ${record.status}${record.reviewVersion === item.review.reviewVersion ? ' · Latest' : ' · Newer review available'}` : 'Review not yet recorded for this commit'}`;
-    node.iconPath = new vscode.ThemeIcon(location.kind === 'pending' ? 'clock' : location.kind === 'outdated' ? 'warning' : item.review.resolved ? 'pass' : location.kind === 'uncertain' ? 'question' : 'comment-discussion',
+    node.iconPath = new vscode.ThemeIcon(item.notInherited ? item.review.resolved ? 'pass' : 'history' : location.kind === 'pending' ? 'clock' : location.kind === 'outdated' ? 'warning' : item.review.resolved ? 'pass' : location.kind === 'uncertain' ? 'question' : 'comment-discussion',
       location.kind === 'uncertain' ? new vscode.ThemeColor('descriptionForeground') : undefined);
-    node.contextValue = item.review.resolved ? 'gitex-resolved' : 'gitex-open';
-    node.checkboxState = { state: item.review.resolved ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked,
+    node.contextValue = item.notInherited ? 'gitex-earlier-review' : item.review.resolved ? 'gitex-resolved' : 'gitex-open';
+    node.checkboxState = item.notInherited ? undefined : { state: item.review.resolved ? vscode.TreeItemCheckboxState.Checked : vscode.TreeItemCheckboxState.Unchecked,
       tooltip: item.review.resolved ? 'Reopen: show in the paper editor' : 'Resolve: hide from the paper editor',
       accessibilityInformation: { label: 'Resolved', role: 'checkbox' } };
     node.command = { command: 'gitex.reviewThread', title: 'Open review', arguments: [item] };
@@ -808,6 +815,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private async setResolved(target: ThreadItem | vscode.CommentThread, resolved: boolean): Promise<void> {
     const item = target && ('review' in target ? target : this.threadItems.get(target));
     if (!item) { return; }
+    if (item.notInherited) { throw new Error('This earlier review is read only here. Switch to its paper commit to resolve or reopen it.'); }
     await item.repository.store.setResolved(item.review.id, resolved, item.paperCommit);
     await this.refresh(item.repository);
   }
@@ -835,7 +843,11 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     if (!validPath(relative)) { throw new Error('This destination cannot be annotated.'); }
     const anchor = enableEditTracking(createSelectionAnchor(relative, text, selection, await repository.store.head()), text);
     const paperCommit = this.bufferHeads.get(document) ?? await repository.store.head();
-    const reviews = (await repository.store.threads()).flatMap(global => { const review = reviewAtCommit(global, paperCommit) ?? reviewAtCommit(global, global.paperHistory.at(-1)?.paperCommit ?? null) ?? global; return [review]; });
+    const reviews = (await repository.store.threads()).flatMap(global => {
+      const sourceCommit = targetItem?.review.id === global.id ? targetItem.previousReviewCommit : undefined;
+      const review = reviewAtCommit(global, paperCommit) ?? reviewAtCommit(global, sourceCommit ?? global.paperHistory.at(-1)?.paperCommit ?? null) ?? global;
+      return [review];
+    });
     const review = targetItem ? reviews.find(review => review.id === targetItem.review.id) :
       (await vscode.window.showQuickPick(reviews.map(review => ({ label: review.comments[0].body.split('\n')[0].slice(0, 100),
         description: `${review.anchor.path}:${review.anchor.startLine + 1}–${review.anchor.endLine + 1}${review.resolved ? ' · Resolved' : ''}`, review })),
@@ -847,7 +859,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       throw new Error('Save or cancel the inline comment edit before moving this thread. Its draft has been preserved.');
     }
     this.editTracking.stage(document.uri.toString(), anchor, text);
-    await repository.store.move(review.id, anchor, review.anchorRevision, text, paperCommit);
+    await repository.store.move(review.id, anchor, review.anchorRevision, text, paperCommit, targetItem?.previousReviewCommit);
     await this.afterSave(repository);
   }
 
@@ -1062,8 +1074,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       panel.key = this.panelKey(item);
       panel.update(item.review, { repository: this.repositoryLabel(item.repository), location: item.location,
         localReference: undefined,
-        editableComments: item.review.comments.filter(comment => sameAuthor(this.authors.get(item.repository.store.root), comment.author)).map(comment => comment.id),
-        paperCommit: item.paperCommit, reviewNotice: item.reviewNotice, notInherited: item.notInherited, commitError: this.commitErrors.get(item.repository.store.root),
+        editableComments: item.notInherited ? [] : item.review.comments.filter(comment => sameAuthor(this.authors.get(item.repository.store.root), comment.author)).map(comment => comment.id),
+        paperCommit: item.paperCommit, reviewNotice: item.reviewNotice, notInherited: item.notInherited, previousReviewCommit: item.previousReviewCommit, commitError: this.commitErrors.get(item.repository.store.root),
         sync: this.syncErrors.has(item.repository.store.root) ? 'failed' : automatic ? 'automatic' : 'manual', status });
     }
   }

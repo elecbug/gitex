@@ -3,7 +3,7 @@
   "displayName": "GiTex",
   "description": "Git-backed passage comments and collaboration for LaTeX papers.",
   "icon": "media/icon.png",
-  "version": "0.15.3",
+  "version": "0.15.4",
   "publisher": "elecbug",
   "license": "MIT",
   "repository": {

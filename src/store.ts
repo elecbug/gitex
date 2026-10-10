@@ -21,6 +21,11 @@ export interface SyncResult {
   publishedTip: string | null;
   localTip: string | null;
 }
+export interface EarlierReviewNotice {
+  commits: string[];
+  count: number;
+  previous?: { paperCommit: string; review: ReviewThread };
+}
 type Entry = { event: ReviewEvent };
 interface PaperPublication { version: 1; id: string; paperCommit: string; threads: string[] }
 class Entries extends Map<string, Entry> {
@@ -131,8 +136,8 @@ export class ReviewStore {
   edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor, anchorBasedOn?: string, document?: string, paperCommit?: string | null, acknowledgedRevisions?: string[]): Promise<string> {
     return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor, anchorBasedOn, merges: acknowledgedRevisions }, document, paperCommit);
   }
-  move(threadId: string, anchor: Anchor, basedOn: string, document?: string, paperCommit?: string | null): Promise<string> {
-    return this.append(threadId, { type: 'move', anchor, basedOn }, document, paperCommit);
+  move(threadId: string, anchor: Anchor, basedOn: string, document?: string, paperCommit?: string | null, sourcePaperCommit?: string): Promise<string> {
+    return this.append(threadId, { type: 'move', anchor, basedOn }, document, paperCommit, sourcePaperCommit);
   }
   setResolved(threadId: string, resolved: boolean, paperCommit?: string | null): Promise<string> {
     return this.append(threadId, { type: 'state', resolved }, undefined, paperCommit);
@@ -172,15 +177,31 @@ export class ReviewStore {
   }
 
   /** Read-only disclosure of ancestor updates excluded from this commit's published view. */
-  async earlierReviewUpdates(commit: string, reviews?: ReviewThread[]): Promise<Map<string, { commits: string[]; count: number }>> {
+  async earlierReviewUpdates(commit: string, reviews?: ReviewThread[]): Promise<Map<string, EarlierReviewNotice>> {
     const ancestors = await this.paperGraph(commit);
-    const notices = new Map<string, { commits: string[]; count: number }>();
+    const notices = new Map<string, EarlierReviewNotice>();
     for (const global of reviews ?? await this.threads()) {
       const current = reviewAtCommit(global, commit);
       const included = new Set(current?.events.map(event => event.id));
       const missing = global.events.filter(event => event.type !== 'checkpoint' && event.paperCommit && event.paperCommit !== commit &&
         ancestors.has(event.paperCommit) && !included.has(event.id));
-      if (missing.length) { notices.set(global.id, { commits: [...new Set(missing.map(event => event.paperCommit!))], count: missing.length }); }
+      if (!missing.length) { continue; }
+      const notice: EarlierReviewNotice = { commits: [...new Set(missing.map(event => event.paperCommit!))], count: missing.length };
+      if (!current) {
+        // Stop at the nearest recorded version on each ancestry path, including
+        // resolved versions. Do not revive an older open state or borrow a future view.
+        const queue = [...(ancestors.get(commit) ?? [])], visited = new Set<string>();
+        for (let offset = 0; offset < queue.length; offset++) {
+          const hash = queue[offset];
+          if (visited.has(hash)) { continue; } visited.add(hash);
+          const previous = reviewAtCommit(global, hash);
+          if (previous) {
+            notice.previous ??= { paperCommit: hash, review: previous };
+            if (!previous.resolved) { notice.previous = { paperCommit: hash, review: previous }; break; }
+          } else { queue.push(...(ancestors.get(hash) ?? [])); }
+        }
+      }
+      notices.set(global.id, notice);
     }
     return notices;
   }
@@ -297,7 +318,7 @@ export class ReviewStore {
     throw new Error('Reviews changed while recording the paper commit. The commit record will be retried.');
   }
 
-  private append(threadId: string | undefined, payload: Payload, document?: string, paperCommit?: string | null): Promise<string> {
+  private append(threadId: string | undefined, payload: Payload, document?: string, paperCommit?: string | null, sourcePaperCommit?: string): Promise<string> {
     return this.exclusive(async () => {
       const id = randomUUID();
       paperCommit = paperCommit === undefined ? await this.head() : paperCommit;
@@ -319,7 +340,9 @@ export class ReviewStore {
         let thread = global && paperCommit ? await this.inheritedReview(global, paperCommit, undefined, false, new Set([...entries.publications.values()].map(record => record.paperCommit))) : global;
         // An explicit move can reconnect a review after amend/rebase. Mere text equality cannot.
         if (!thread && global && payload.type === 'move') {
-          thread = reviewAtCommit(global, global.paperHistory.at(-1)?.paperCommit ?? null) ?? global;
+          thread = reviewAtCommit(global, sourcePaperCommit ?? global.paperHistory.at(-1)?.paperCommit ?? null);
+          if (!thread && sourcePaperCommit) { throw new Error('The earlier review version is no longer available. Refresh comments before reconnecting it.'); }
+          thread ??= global;
         }
         const publishedViews = [...entries.publications.values()].filter(record => record.paperCommit === paperCommit);
         if (global && payload.type !== 'move' && paperCommit && !reviewAtCommit(global, paperCommit) && publishedViews.length &&

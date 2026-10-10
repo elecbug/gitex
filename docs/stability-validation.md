@@ -1,6 +1,6 @@
-# Stability validation for GiTex 0.15.2
+# Stability validation for GiTex 0.15.4
 
-This release separates local write transactions from network operations and requires an explicit publication policy. It keeps the commit-scoped event architecture and freezes inheritance at first publication. It concentrates on false attachments, disclosure before sharing source snapshots, and visibility of late ancestor reviews. It does not add automatic cross-version discussion merging or destructive archive pruning.
+Validation covers separate local-write and network queues, explicit publication policy, and the commit-scoped event architecture with inheritance frozen at first publication. The 0.15.4 update adds a read-only Earlier unresolved view for excluded ancestor threads, alongside regression coverage for false attachments and source-snapshot disclosure. It does not add automatic cross-version discussion merging or destructive archive pruning.
 
 ## Evidence and remaining limits
 
@@ -21,7 +21,7 @@ Run `make test` and `make test-extension` (the latter opens an isolated VS Code 
 | Reconstructed edits | Repeated passage deletion, whole-file replacement, external move, ordinary prefix insertion | Ambiguous results stay uncertain; unambiguous results disclose reconstructed evidence |
 | Uncertainty lifetime | Reply/save, later edits, restart, new paper commit, explicit move | Uncertain geometry never becomes a new reference without confirmation |
 | Paper versions | Two users at different commits, detached HEAD, both-parent merge, amend and actual rebase | Current-commit views remain isolated; explicit recovery retains earlier history |
-| Late reviews | New ancestor root and reply after descendant publication | Disclose the older hash and excluded updates; keep the published descendant unchanged |
+| Late reviews | New ancestor root and reply after descendant publication; later descendants; resolve/reopen; future or nearer resolved versions | Show excluded open threads as Earlier unresolved with their source hash and read-only actions; no source decorations or inherited copy; keep current discussion unchanged |
 | Concurrent review writes | Same-author conflicts, independent comments/replies, rejected push and retry | Preserve all immutable events and require acknowledgment of competing edit heads |
 | Snapshot sharing | First automatic push, cancel/approve dialog, uncommitted default, changed destination | Local comments survive; no unapproved push |
 | Snapshot ancestry | Private blob absent at tip but present in a parent | Include that blob in the publication report |
@@ -33,7 +33,7 @@ Run `make test` and `make test-extension` (the latter opens an isolated VS Code 
 
 VS Code 1.90 refuses modal dialogs in extension-test mode. The sharing test injects only the dialog response, verifies the disclosure text and exercises real inspection, cancellation, settings and Git publication. Other Review interactions are clicked with Playwright. A separate standalone VS Code 1.90.2 run with custom dialogs also rendered the real disclosure, verified that Cancel did not create a remote comments branch, and verified that Share This Push published successfully. Platform-native operating-system dialog layouts were not exercised.
 
-The completed automated run passed **171 core tests** and the full VS Code **1.90.2** extension-host suite.
+The core regression suite now includes **174 tests**, including excluded-review resolution and source-version isolation. The VS Code **1.90.2** extension-host suite also covers the Earlier unresolved UI and explicit reconnection.
 
 The automated matrix is a regression boundary, not a substitute for two-person usability testing. Release candidates should also be exercised with separate VS Code windows, real network latency, an offline reviewer who returns after publication, and repeated paper-version switching. Do not interpret synthetic tests as proof of all Git host/transport behavior.
 

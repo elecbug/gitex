@@ -68,7 +68,7 @@ Local saves continue while a sync waits for the remote or snapshot approval. Syn
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.15.3.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.15.4.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -222,7 +222,7 @@ git -C bob config user.email bob@example.test
 
 Open `alice` and `bob` in separate VS Code windows with GiTex installed. Alice creates a comment and runs Sync Comments. Bob runs Fetch Comments to see it, then Sync Comments to publish his own work. Replies written offline by both users are preserved when they synchronize. For remote use, expose `paper.git` through SSH or another Git transport.
 
-Earlier reviews excluded by frozen publication remain discoverable: Explorer and Review show **Not inherited** or **Earlier updates**, with the older paper hash. Their contents stay in Paper commit history; the current discussion is unchanged.
+Starting in **0.15.4**, unresolved threads excluded by frozen publication appear as **Earlier unresolved** in Explorer, with their original paper commit hash. They remain discoverable across later commits without creating a current-version copy, inline comment, highlight or estimated source marker. Opening one shows a read-only Review of that earlier version: switch to its commit to reply, edit or resolve it, or explicitly reconnect it with **Move to editor selection**. Receiving a resolution on the earlier version removes the unresolved label; the historical thread remains **Resolved · Not inherited**. Reopening it restores **Earlier unresolved**. Existing current-version threads with excluded ancestor updates retain **Earlier updates** without changing their current discussion.
 
 ## Storage and concurrent updates
 
@@ -249,7 +249,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.15.3.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.15.4.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

@@ -68,7 +68,7 @@
 
 필요한 환경은 VS Code 1.90 이상, Git, 로컬 논문 저장소입니다. LaTeX 컴파일에는 기존에 사용하던 LaTeX 확장과 TeX 배포판이 필요합니다.
 
-1. VS Code 명령 팔레트에서 **Extensions: Install from VSIX…**를 실행하고 `gitex-0.15.3.vsix`를 선택합니다.
+1. VS Code 명령 팔레트에서 **Extensions: Install from VSIX…**를 실행하고 `gitex-0.15.4.vsix`를 선택합니다.
 2. 논문의 로컬 Git 저장소 또는 여러 저장소를 포함한 상위 폴더를 열고 논문 파일을 선택합니다. 새로 복제하려면 **GiTex: Clone Repository**, 이미 열린 폴더에 적용하려면 **GiTex: Apply Repository to Current Folder**를 실행합니다.
 3. Git 작성자 이름과 이메일이 설정되어 있어야 합니다.
 
@@ -222,7 +222,7 @@ git -C bob config user.email bob@example.test
 
 `alice`와 `bob`을 각각 별도 VS Code 창으로 열고 GiTex를 설치합니다. Alice가 주석을 작성한 뒤 Sync Comments를 실행하고, Bob도 Sync Comments를 실행하면 같은 주석이 나타납니다. 양쪽에서 오프라인으로 답글을 작성한 뒤 동기화해도 답글들이 함께 보존됩니다. 서버에서는 위 `paper.git`을 SSH 등으로 제공하면 됩니다.
 
-최초 공유 후 이전 커밋에 늦게 도착한 리뷰는 Explorer·Review의 **Not inherited** 또는 **Earlier updates**와 이전 커밋 해시로 안내합니다. 현재 토론에 자동으로 합치지 않으며 Paper commit history에서 확인할 수 있습니다.
+**0.15.4부터** 첫 게시 이후 상속되지 않은 미해결 스레드는 Explorer에 **Earlier unresolved**(이전 커밋의 미해결 주석)와 원래 커밋 해시로 표시합니다. 후속 커밋에서도 확인할 수 있지만 현재 버전의 사본·인라인 주석·음영·추정 위치 표시는 만들지 않습니다. 클릭하면 이전 버전의 Review를 읽기 전용으로 열며, 답글·편집·해결은 원래 커밋으로 이동한 뒤 수행합니다. 현재 선택 영역에 명시적으로 연결하려면 **Move to editor selection**을 사용합니다. 이전 버전의 해결 상태를 받으면 미해결 표시가 사라지고 **Resolved · Not inherited** 이력으로 남으며, 다시 열면 **Earlier unresolved**로 돌아옵니다. 현재 버전에 이미 존재하는 스레드의 누락된 이전 업데이트는 **Earlier updates**로 안내하고 현재 토론은 유지합니다.
 
 ## 데이터 저장과 동시 작업
 
@@ -249,7 +249,7 @@ make install
 make package
 ```
 
-프로젝트 루트에서 실행하면 현재 버전의 VSIX 파일(예: `gitex-0.15.3.vsix`)이 생성됩니다. `make` 또는 `make help`로 사용 가능한 명령을 확인할 수 있습니다.
+프로젝트 루트에서 실행하면 현재 버전의 VSIX 파일(예: `gitex-0.15.4.vsix`)이 생성됩니다. `make` 또는 `make help`로 사용 가능한 명령을 확인할 수 있습니다.
 
 | Make 명령 | 실행하는 작업 |
 | --- | --- |
