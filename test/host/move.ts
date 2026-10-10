@@ -54,6 +54,25 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   assert.deepEqual(moved.comments, original.comments);
   assert.deepEqual(moved.anchorHistory.at(-1)!.from, original.anchor);
   assert.equal(await view.locator('#reply').inputValue(), 'Reply draft survives moving');
+  const discussionMoves = view.locator('#comments > .move-event');
+  await until(async () => await discussionMoves.count() === 1, 'read-only location move in Discussion');
+  const firstMove = discussionMoves.first();
+  assert.match((await firstMove.textContent())!, /Location moved.*Read only/s);
+  assert.ok((await firstMove.textContent())!.includes(moved.anchorHistory.at(-1)!.author.name));
+  assert.equal(await firstMove.locator('time').getAttribute('datetime'), moved.anchorHistory.at(-1)!.at);
+  assert.match((await firstMove.textContent())!, /From: main\.tex/);
+  assert.match((await firstMove.textContent())!, /To: moved\.tex · Lines 2–3/);
+  assert.equal(await firstMove.locator('button, textarea, input, [contenteditable]').count(), 0, 'move records have no editing controls');
+  await firstMove.locator('.move-passages > summary').click();
+  assert.ok((await firstMove.textContent())!.includes('Unsaved chosen target.'));
+  await app.refresh();
+  assert.equal(await firstMove.locator('.move-passages').getAttribute('open'), '', 'refresh preserves expanded move details');
+  const assertDiscussionOrder = async () => {
+    const ids = item().review.events.filter((event: { type: string }) => ['create', 'reply', 'move'].includes(event.type)).map((event: { id: string }) => event.id);
+    await until(async () => JSON.stringify(await view.locator('#comments > [data-event-id]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-event-id')))) === JSON.stringify(ids),
+      'comments, replies and moves follow their recorded event order');
+  };
+  await assertDiscussionOrder();
   assert.equal(await new Git(bare).ref(REMOTE_REF), remoteBefore, 'disabled automatic sync leaves moves local');
   await view.locator('#tracking-history > summary').click();
   await until(async () => (await view.locator('#tracking-history').textContent())!.includes('Manual move'), 'manual move history');
@@ -74,6 +93,8 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   assert.equal(syncs, 1, 'one automatic sync after a saved location move');
   moved = await current();
   assert.equal(moved.anchorHistory.filter(entry => entry.kind === 'move').length, 2, 'same-destination manual saves are recorded too');
+  await until(async () => await discussionMoves.count() === 2, 'distinct same-destination moves in Discussion');
+  await assertDiscussionOrder();
   const peer = new ReviewStore(path.join(path.dirname(store.root), 'peer'));
   await peer.pull();
   assert.deepEqual((await peer.threads()).find(thread => thread.id === original.id)!.anchorHistory, moved.anchorHistory);
@@ -115,6 +136,8 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   await Promise.all([...app.syncs.values()]);
   assert.deepEqual((await current()).anchor.selected, ['Another destination!'], 'distinctive preceding context and the saved file end support this small edit');
   assert.equal((await current()).anchor.path, 'moved.tex');
+  await assertDiscussionOrder();
+  assert.equal(await discussionMoves.count(), 3, 'automatic reference updates are not shown as manual moves');
   const previousWidget = app.nativeThreads.get(item().key);
   const main = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(store.root, 'main.tex')));
   editor = await vscode.window.showTextDocument(main, vscode.ViewColumn.One);
@@ -125,6 +148,8 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   assert.notEqual(returnedWidget, previousWidget, 'moving an attached comment across files recreates its native widget');
   assert.equal(returnedWidget.uri.fsPath, main.uri.fsPath);
   assert.equal((await current()).anchorHistory.filter(entry => entry.kind === 'move').length, 4);
+  await until(async () => await discussionMoves.count() === 4, 'all moves remain visible in Discussion');
+  await assertDiscussionOrder();
   repository.store.sync = realSync;
   for (const panel of app.panels.values()) { panel.dispose(); }
   await browser.close();

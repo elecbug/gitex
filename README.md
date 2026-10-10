@@ -105,6 +105,8 @@ The review panel follows VS Code's light, dark, and high-contrast themes and ada
 
 Each comment shows its author, timestamp, and edited marker. Edit history and tracking history open on demand, with the newest entries first and the current version marked. On wider panels, manual moves show the previous and new references side by side. Switching threads preserves drafts, expanded sections, and scroll position while the tab stays open.
 
+**Discussion** also shows manual location moves alongside comments and replies in recorded event order. Each **Location moved** entry is read only and shows who moved the thread, when, and its previous and new file/line ranges. Expand **Moved passages** to inspect the saved text. Automatic tracking updates remain in Tracking history.
+
 Use **Ctrl+Enter** (**Cmd+Enter** on macOS) inside a reply or edit field to save, or use its save button. Empty replies are disabled; **Saving…** prevents duplicate submissions while the local save is pending. The sync indicator distinguishes automatic sync on save, manual sync, and sync failures. Expand it for details. Opening or expanding these controls does not access the remote.
 
 ## Resolve and reopen

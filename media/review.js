@@ -145,7 +145,7 @@
     const paperEntries = element('div', undefined, paperHistory, 'revision-list');
     const view = { key, root, repository, location, match, lines, contextNote, candidates, excerpt, passage, passageSummary, source, originalExcerpt,
       surroundings, surroundingsLabel, surroundingsBody, localContext, localSummary, localBody,
-      count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), error: '',
+      count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), moves: new Map(), error: '',
       trackingLabel, trackingEntries, trackingSignature: '', paperCommit, paperStatus, paperSummary, paperEntries, paperSignature: '', scroll: 0 };
     source.onclick = () => vscode.postMessage({ type: 'source', key: view.key });
     move.onclick = () => submit(view, { type: 'move' }, [move], () => {}, () => {}, move, 'Moving…');
@@ -156,6 +156,7 @@
   }
   function createNode(view, comment) {
     const details = element('details', undefined, view.comments, 'comment-card'); details.open = true;
+    details.dataset.eventId = comment.id;
     const summary = element('summary', undefined, details);
     const avatar = element('span', '', summary, 'avatar'); avatar.setAttribute('aria-hidden', 'true');
     const meta = element('div', undefined, summary, 'comment-meta');
@@ -195,6 +196,46 @@
     node.validate = wireComposer(view, form, textarea, save, [cancel],
       () => ({ type: 'edit', commentId: comment.id, basedOn: node.basedOn, merges: node.merges, body: textarea.value }), close);
     return node;
+  }
+  function createMove(entry) {
+    const article = element('article', undefined, undefined, 'move-event');
+    article.dataset.eventId = entry.id;
+    article.setAttribute('aria-label', 'Location moved');
+    const heading = element('div', undefined, article, 'entry-heading');
+    icon('move', heading);
+    element('h3', 'Location moved', heading);
+    element('span', 'Read only', heading, 'badge');
+    const meta = element('p', undefined, article, 'entry-meta');
+    element('span', entry.author.name + ' · ', meta);
+    const timestamp = element('time', new Date(entry.at).toLocaleString(), meta);
+    timestamp.dateTime = entry.at;
+    element('p', 'From: ' + (entry.from ? entry.from.path + ' · ' + range(entry.from) : 'Previous reference unavailable'), article, 'move-location');
+    element('p', 'To: ' + entry.anchor.path + ' · ' + range(entry.anchor), article, 'move-location');
+    const passages = element('details', undefined, article, 'move-passages');
+    element('summary', 'Moved passages', passages);
+    const comparison = element('div', undefined, passages, 'move-comparison');
+    if (entry.from) reference(element('div', undefined, comparison), 'Previous reference', entry.from);
+    reference(element('div', undefined, comparison), 'Moved to', entry.anchor);
+    return article;
+  }
+  function renderDiscussion(view, review) {
+    const moves = review.anchorHistory.filter(entry => entry.kind === 'move');
+    for (const entry of moves) {
+      if (!view.moves.has(entry.id)) view.moves.set(entry.id, createMove(entry));
+    }
+    // Events already follow the model's logical clock / ID order, including
+    // received concurrent moves. Wall-clock timestamps can disagree across users.
+    let cursor = view.comments.firstElementChild;
+    for (const event of review.events) {
+      const node = event.type === 'move' ? view.moves.get(event.id) :
+        event.type === 'create' || event.type === 'reply' ? view.nodes.get(event.id)?.details : undefined;
+      if (!node) continue;
+      if (node === cursor) cursor = cursor.nextElementSibling;
+      else view.comments.insertBefore(node, cursor);
+    }
+    // Reuse existing comment nodes so open editors, focus and drafts survive.
+    view.count.textContent = review.comments.length + (review.comments.length === 1 ? ' comment' : ' comments') +
+      (moves.length ? ' · ' + moves.length + (moves.length === 1 ? ' move' : ' moves') : '');
   }
   function historyEntry(parent, title, current, currentLabel, author, at) {
     const entry = element('article', undefined, parent, 'history-entry');
@@ -277,7 +318,6 @@
       renderSurroundings(view.localBody, context.localReference.anchor);
     }
     view.source.querySelector('.button-label').textContent = uncertain ? 'Open estimated location' : attached ? 'Open source' : 'Open saved excerpt';
-    view.count.textContent = review.comments.length + (review.comments.length === 1 ? ' comment' : ' comments');
     view.syncInfo.dataset.state = context.sync;
     view.syncLabel.textContent = context.sync === 'failed' ? 'Sync pending' : context.sync === 'automatic' ? 'Auto sync on save' : 'Manual sync';
     view.status.textContent = context.status;
@@ -335,6 +375,7 @@
           });
         }
       }
+      renderDiscussion(view, message.review);
       const anchors = message.review.anchorHistory;
       const signature = message.review.anchorRevision + ':' + anchors.map(entry => entry.id).join(',');
       if (signature !== view.trackingSignature) {

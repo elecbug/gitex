@@ -82,6 +82,11 @@ button:disabled { opacity: .55; cursor: default; }
 .author-name { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .edited { color: var(--muted); font-size: 10px; font-weight: 400; }
 .timestamp { font-size: 11px; color: var(--muted); }
+.move-event { margin-bottom: 12px; padding: 12px 16px; border: 1px dashed var(--border); border-radius: 7px; }
+.move-event .entry-meta { margin: 6px 0; }
+.move-location { font-size: 12px; overflow-wrap: anywhere; }
+.move-passages > summary { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; padding-top: 10px; }
+.move-passages pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--inset); border-radius: 4px; padding: 10px 12px; font: 12px/1.65 var(--vscode-editor-font-family); max-height: 200px; overflow: auto; }
 .body { padding: 14px 16px 6px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
 .comment-actions { padding: 4px 8px 6px; }
 .history { border-top: 1px solid var(--border); }
