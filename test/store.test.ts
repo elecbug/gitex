@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { createAnchor, locateAnchor, renewAnchor } from '../src/anchor';
 import { Git } from '../src/git';
-import { enableEditTracking } from '../src/editTracking';
+import { EditTracking, enableEditTracking } from '../src/editTracking';
 import { materialize, parseEvent, validPath } from '../src/model';
 import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../src/store';
 
@@ -490,5 +490,28 @@ test('concurrent snapshot archives retain both documents and all reviews', async
   assert.deepEqual(await a.threads(), await b.threads());
   for (const store of [a, b]) {
     assert.equal(await store.documentText(aa), left); assert.equal(await store.documentText(bb), right);
+  }
+});
+
+
+test('inserted-region provenance synchronizes separately from original comment fragments', async t => {
+  const { a, b, anchor } = await fixture(t);
+  const original = enableEditTracking(anchor, paper);
+  const id = await a.create(original, 'Original target', paper);
+  const tracker = new EditTracking();
+  tracker.seed('thread', id, 'main.tex', original, paper);
+  const updated = paper.replace('A shared result.', 'A INSERTED shared result.');
+  tracker.change('main.tex', updated, [{ range: { start: { line: 2, character: 2 }, end: { line: 2, character: 2 } }, text: 'INSERTED ' }]);
+  const next = tracker.reference('thread', id, original, updated, await a.head())!;
+  await a.reply(id, 'Reply after inserting text', next, id, updated);
+  await a.sync(); await b.pull();
+  const received = (await b.threads())[0];
+  assert.deepEqual(received.anchor.tracking, next.tracking);
+  assert.deepEqual(received.identityAnchor.selected, ['A shared result.']);
+  const remote = new EditTracking();
+  assert.equal(remote.seed('remote', received.anchorRevision, 'main.tex', received.anchor, (await b.documentText(received.anchor))!), true);
+  assert.deepEqual(remote.highlights('remote', received.anchorRevision, updated).inserted.map(range => updated.slice(range.start, range.end)), ['INSERTED ']);
+  for (const insertions of [null, {}, [{ start: -1, end: 2 }], [{ start: 2, end: 2 }]]) {
+    await assert.rejects(a.create({ ...next, tracking: { ...next.tracking!, insertions } } as any, 'Invalid region', updated), /Invalid GiTex review data/);
   }
 });

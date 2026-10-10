@@ -19,7 +19,7 @@ export interface Anchor {
   // selected contains only the owned text, even when the UI covers whole lines.
   logicalRange?: LogicalRange;
   /** Exact editor-operation tracking; fragment offsets address the LF-normalized snapshot. */
-  tracking?: { version: 1; fragments: { start: number; end: number }[] };
+  tracking?: { version: 1; fragments: { start: number; end: number }[]; insertions?: { start: number; end: number }[] };
 }
 
 export interface Estimate {

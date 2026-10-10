@@ -10,6 +10,7 @@ import { repositoryTests } from './repositories';
 import { inlineSyncTests } from './inlineSync';
 import { blankLineTests } from './blankLines';
 import { editTrackingTests } from './editTracking';
+import { highlightTests } from './highlights';
 
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('gitex-local.gitex');
@@ -126,6 +127,7 @@ export async function run(): Promise<void> {
   await inlineSyncTests(app, store);
   await blankLineTests(app, store);
   await editTrackingTests(app, store);
+  await highlightTests(app, store);
   await repositoryTests(app, store);
   console.log('GiTex extension host: applying repositories, unsaved-file protection, save-only sync, editing, history, drafts, and anchoring passed.');
 }

@@ -2,7 +2,7 @@
   "name": "gitex",
   "displayName": "GiTex",
   "description": "Git-backed passage comments and collaboration for LaTeX papers.",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "publisher": "gitex-local",
   "license": "MIT",
   "repository": {
@@ -157,7 +157,7 @@
     "viewsWelcome": [
       {
         "view": "gitex.comments",
-        "contents": "Open a paper file to show comments for its Git repository. Repositories in subfolders are discovered automatically.\nSelect lines and run [Add Line Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Apply to Current Folder](command:gitex.applyRepository) · [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
+        "contents": "Open a paper file to show comments for its Git repository. Repositories in subfolders are discovered automatically.\nSelect text and run [Add Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Apply to Current Folder](command:gitex.applyRepository) · [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
       }
     ],
     "menus": {
@@ -337,6 +337,48 @@
           "description": "Fetch and push comments once in the background after creating a comment, replying, or saving an edit or manual location move. Opening, clicking, expanding, or canceling comments does not access the remote."
         }
       }
-    }
+    },
+    "colors": [
+      {
+        "id": "gitex.commentBackground",
+        "description": "Background of text belonging to a GiTex comment.",
+        "defaults": {
+          "dark": "#FFE08255",
+          "light": "#FFF1AACC",
+          "highContrast": "#FFE08233",
+          "highContrastLight": "#FFF1AACC"
+        }
+      },
+      {
+        "id": "gitex.commentBorder",
+        "description": "Outline of text belonging to a GiTex comment.",
+        "defaults": {
+          "dark": "#FFE08288",
+          "light": "#B88B2266",
+          "highContrast": "#FFD24A",
+          "highContrastLight": "#805A00"
+        }
+      },
+      {
+        "id": "gitex.insertedBackground",
+        "description": "Background of text inserted between GiTex comment fragments.",
+        "defaults": {
+          "dark": "#7FDBFF55",
+          "light": "#C9F0FFCC",
+          "highContrast": "#7FDBFF33",
+          "highContrastLight": "#C9F0FFCC"
+        }
+      },
+      {
+        "id": "gitex.insertedBorder",
+        "description": "Dashed outline of text inserted between GiTex comment fragments.",
+        "defaults": {
+          "dark": "#7FDBFF99",
+          "light": "#2088AA77",
+          "highContrast": "#7FDBFF",
+          "highContrastLight": "#006080"
+        }
+      }
+    ]
   }
 }

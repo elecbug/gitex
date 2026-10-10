@@ -175,3 +175,113 @@ test('CRLF editor changes use line columns and snapshots use normalized offsets'
   if (location.kind === 'attached') { assert.equal(location.startLine, 2); }
   assert.deepEqual(f.tracker.reference('thread', 'revision', f.anchor, text, null)!.selected, ['Target text.']);
 });
+
+test('split highlights distinguish original fragments from inserted text and survive sharing', () => {
+  const f = fixture('Before. Alpha beta gamma. After.', 'Alpha beta gamma.');
+  edit(f, f.text.indexOf('beta'), 0, 'INSERTED ');
+  const highlights = () => f.tracker.highlights('thread', 'revision', f.text);
+  assert.deepEqual(highlights().owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta gamma.']);
+  assert.deepEqual(highlights().inserted.map(range => f.text.slice(range.start, range.end)), ['INSERTED ']);
+  edit(f, 0, 0, 'Preface.\n');
+  edit(f, f.text.indexOf('INSERTED') + 3, 0, ' changed ');
+  assert.deepEqual(highlights().inserted.map(range => f.text.slice(range.start, range.end)), ['INS changed ERTED ']);
+  const next = reference(f);
+  assert.ok(validAnchor(next));
+  assert.equal(next.tracking!.insertions!.length, 1);
+  const peer = new EditTracking();
+  assert.equal(peer.seed('peer', 'next', 'main.tex', JSON.parse(JSON.stringify(next)), f.text), true);
+  assert.deepEqual(peer.highlights('peer', 'next', f.text), highlights());
+  f.tracker.locate('thread', 'revision', f.text, true);
+  const restored = new EditTracking(JSON.parse(JSON.stringify(f.tracker.snapshot())));
+  assert.deepEqual(restored.highlights('thread', 'revision', f.text), highlights());
+  assert.deepEqual(restored.highlights('thread', 'different-revision', f.text), { owned: [], inserted: [] });
+});
+
+test('moving a split container moves both original and inserted shading without coloring unrelated gaps', () => {
+  const f = fixture('Prefix. Alpha beta. Suffix.\nDestination: ', 'Alpha beta.');
+  edit(f, f.text.indexOf('beta'), 0, 'INSERTED ');
+  const start = f.text.indexOf('Alpha'), cut = 'Alpha INSERTED beta.';
+  edit(f, start, cut.length, '');
+  edit(f, f.text.length, 0, cut);
+  const colors = f.tracker.highlights('thread', 'revision', f.text);
+  assert.deepEqual(colors.owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta.']);
+  assert.deepEqual(colors.inserted.map(range => f.text.slice(range.start, range.end)), ['INSERTED ']);
+  const ordinary = fixture('Alpha beta.\nUnrelated paragraph.\n', 'Alpha beta.');
+  edit(ordinary, 6, 5, ''); edit(ordinary, ordinary.text.length, 0, 'beta.');
+  assert.deepEqual(ordinary.tracker.highlights('thread', 'revision', ordinary.text).inserted, [], 'a cut does not turn all intervening text into inserted prose');
+});
+
+test('saving a cut keeps it live, but closing or restoring its saved state makes it outdated', () => {
+  const f = fixture('Before. Target text. After.\n', 'Target text.');
+  const selected = 'Target text.';
+  edit(f, f.text.indexOf(selected), selected.length, '');
+  assert.equal(f.tracker.locate('thread', 'revision', f.text, true).kind, 'uncertain');
+  const saved = f.tracker.snapshot();
+  assert.ok(!JSON.stringify(saved).includes('"cut"'), 'clipboard records are not persisted');
+  const restored = new EditTracking(JSON.parse(JSON.stringify(saved)));
+  assert.equal(restored.locate('thread', 'revision', f.text).kind, 'outdated');
+  assert.deepEqual(restored.highlights('thread', 'revision', f.text), { owned: [], inserted: [] });
+  const reopened = f.text + selected;
+  restored.change('main.tex', reopened, [{ range: { start: positionAt(f.text, f.text.length), end: positionAt(f.text, f.text.length) }, text: selected }]);
+  assert.equal(restored.locate('thread', 'revision', reopened).kind, 'outdated', 'a new session cannot revive an expired cut');
+  // More than the old 100-change limit must not expire a live editor session.
+  for (let i = 0; i < 105; i++) { edit(f, 0, 0, 'x'); }
+  edit(f, f.text.length, 0, selected);
+  assert.equal(f.tracker.locate('thread', 'revision', f.text).kind, 'attached');
+  assert.equal(reference(f).startLine, 1);
+  edit(f, f.text.indexOf(selected), selected.length, '');
+  f.tracker.locate('thread', 'revision', f.text, true);
+  f.tracker.endSession('main.tex');
+  assert.equal(f.tracker.locate('thread', 'revision', f.text).kind, 'outdated');
+  edit(f, f.text.length, 0, selected);
+  assert.equal(f.tracker.locate('thread', 'revision', f.text).kind, 'outdated');
+});
+
+test('a partial cut remains pasteable after saving a reply at the surviving fragment', () => {
+  const f = fixture('Alpha beta.\nDestination: ', 'Alpha beta.');
+  edit(f, 6, 5, '');
+  const next = reference(f);
+  f.tracker.stage('main.tex', next, f.text, 'thread');
+  assert.equal(f.tracker.adopt('thread', 'next', 'main.tex', next), true);
+  const at = f.text.length;
+  f.tracker.change('main.tex', f.text + 'beta.', [{ range: { start: positionAt(f.text, at), end: positionAt(f.text, at) }, text: 'beta.' }]);
+  f.text += 'beta.';
+  const highlights = f.tracker.highlights('thread', 'next', f.text);
+  assert.deepEqual(highlights.owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta.']);
+});
+
+test('insertion highlights follow undo, deletion and line reflow', () => {
+  const f = fixture('Alpha beta.', 'Alpha beta.');
+  edit(f, 6, 0, 'New ');
+  edit(f, 6, 4, '', true);
+  assert.deepEqual(f.tracker.highlights('thread', 'revision', f.text).inserted, []);
+  edit(f, 6, 0, 'New ', true);
+  assert.equal(f.tracker.highlights('thread', 'revision', f.text).inserted.length, 1);
+  edit(f, 8, 0, '\n');
+  assert.deepEqual(f.tracker.highlights('thread', 'revision', f.text).inserted.map(range => f.text.slice(range.start, range.end)), ['Ne\nw ']);
+  edit(f, 6, 5, '');
+  assert.deepEqual(f.tracker.highlights('thread', 'revision', f.text).inserted, []);
+});
+
+test('pasting original text into inserted text keeps the two highlight ranges disjoint and shareable', () => {
+  const f = fixture('Alpha beta. tail', 'Alpha beta.');
+  edit(f, 6, 0, 'New ');
+  edit(f, 10, 5, '');
+  edit(f, 8, 0, 'beta.');
+  const colors = f.tracker.highlights('thread', 'revision', f.text);
+  assert.deepEqual(colors.owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta.']);
+  assert.deepEqual(colors.inserted.map(range => f.text.slice(range.start, range.end)), ['Ne', 'w ']);
+  const next = reference(f), peer = new EditTracking();
+  assert.equal(peer.seed('peer', 'next', 'main.tex', next, f.text), true);
+  assert.deepEqual(peer.highlights('peer', 'next', f.text), colors);
+});
+
+test('moving inserted text inside an original fragment does not duplicate insertion shading', () => {
+  const f = fixture('Alpha beta.', 'Alpha beta.');
+  edit(f, 6, 0, 'New ');
+  edit(f, 6, 4, '');
+  edit(f, 2, 0, 'New ');
+  const colors = f.tracker.highlights('thread', 'revision', f.text);
+  assert.deepEqual(colors.owned.map(range => f.text.slice(range.start, range.end)), ['Al', 'pha ', 'beta.']);
+  assert.deepEqual(colors.inserted, [{ start: 2, end: 6 }]);
+});

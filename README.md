@@ -18,7 +18,8 @@ A VS Code extension for sharing passage comments on LaTeX papers through Git. Us
 - Keep the original selection when a target splits; show the comment on the leading surviving fragment.
 - Manually move a thread to selected source text, including another file in the same repository, with a complete move history.
 - Reuse one review tab when switching threads, preserving unsaved edits and replies while the tab stays open.
-- Retain removed targets as **Uncertain**, with their original text and deletion position.
+- Retain live cuts as **Uncertain**; finalize wholly removed, saved targets as **Outdated** when their editing session ends.
+- Shade original comment fragments in pale yellow and inserted text in pale blue; click either shade to open the comment.
 - Keep comments **Pending document** when reviews arrive before the paper, and prompt the user to pull the source.
 - Save comments offline and synchronize reviews from multiple users through a central bare repository.
 
@@ -53,7 +54,7 @@ Automatic sync runs once after saving a comment, reply, edit, or manual location
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.12.0.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.13.0.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -111,15 +112,21 @@ Resolving a thread with an unsaved inline edit keeps the draft recoverable in th
 
 ## Tracking through editor edits
 
-GiTex 0.12.0 follows ranges through VS Code's edit events. Text inserted before a selection shifts its endpoints; text appended at its end stays outside the comment. A same-file cut followed by an exact paste moves the range to the pasted position. Copies do not move attached comments. Undo and redo restore previous ranges.
+GiTex 0.13.0 follows ranges through VS Code's edit events. Text inserted before a selection shifts its endpoints; text appended at its end stays outside the comment. A same-file cut followed by an exact paste moves the range to the pasted position. Copies do not move attached comments. Undo and redo restore previous ranges.
 
 A line break or whitespace inserted inside the target keeps one multi-line range. Other inserted text splits it: GiTex shows the comment on the leading surviving fragment while retaining the complete **Original selection** and the other fragments. Replies and edits can publish the current reference without replacing that original identity. Only an explicit manual move establishes a new identity; previous identities remain in **Tracking history**.
 
-When the entire target is deleted, an **Uncertain** marker retains its edit position. When reviews arrive ahead of the paper, **Pending document** appears in Explorer and Review and the thread is hidden from the editor. Pull the paper through Source Control; **Sync Comments** only receives and publishes reviews. GiTex checks the exact current document or the paper branch's history before replaying changes from a newly received reference.
+When the entire target is deleted, an **Uncertain** marker retains its edit position for the current editing session. Saving does not expire the cut: pasting in the same session moves the comment. If the target is still absent from the saved source when its last text tab closes, or when VS Code restarts, the comment becomes **Outdated** and remains only in Explorer and Review. When reviews arrive ahead of the paper, **Pending document** appears in Explorer and Review and the thread is hidden from the editor. Pull the paper through Source Control; **Sync Comments** only receives and publishes reviews. GiTex checks the exact current document or the paper branch's history before replaying changes from a newly received reference.
 
 Comment metadata now includes a deduplicated snapshot of the whole annotated source document, including unsaved source edits. These snapshots establish document versions across clients. Existing events remain readable, but all collaborators must use **GiTex 0.12.0 or later** once the metadata archive uses format 2. Older comments without a recoverable source snapshot may require **Move to editor selection**.
 
-Saved local ranges survive restarting VS Code. File reloads and changes made while closed use an exact edit diff from a known snapshot, without fuzzy sentence matching. Clipboard pairing is limited to recent matching deletions in the same document; cross-file relocation uses the manual move command. See [Anchor tracking design and implementation](docs/anchor-tracking.md) for range rules, snapshot storage, pending states, compatibility, and limits.
+Saved local ranges survive restarting VS Code. File reloads and changes made while closed use an exact edit diff from a known snapshot, without fuzzy sentence matching. Clipboard pairing uses matching deletions in the same document and editing session; cross-file relocation uses the manual move command. See [Anchor tracking design and implementation](docs/anchor-tracking.md) for range rules, snapshot storage, pending states, compatibility, and limits.
+
+## Source highlighting
+
+Unresolved comment fragments stay shaded in pale yellow, including when the inline thread is collapsed. Text inserted between split fragments is pale blue with a dashed outline. Every surviving fragment is shaded; the comment's original selection remains available in Review. Clicking either color opens the comment without taking focus away from the source editor. Dragging a selection or moving the cursor with the keyboard does not open it. Hover text also identifies the region and provides an **Open comment** link.
+
+Resolved, pending, and outdated threads have no source shading. Colors adapt to light, dark, and high-contrast themes. To customize them, use `gitex.commentBackground`, `gitex.commentBorder`, `gitex.insertedBackground`, and `gitex.insertedBorder` under VS Code's `workbench.colorCustomizations`. Use GiTex 0.13.0 across collaborators to preserve inserted-region colors when saving references.
 
 ## Move a comment manually
 
@@ -127,7 +134,7 @@ Saved local ranges survive restarting VS Code. File reloads and changes made whi
 2. Open the thread in **GiTex Comments**, then click **Move to editor selection** in the review panel. You can also select **GiTex: Move Comment to Selection** from the thread's Explorer context menu or inline thread toolbar.
 3. Alternatively, run **GiTex: Move Comment to Selection** from the Command Palette or the editor context menu and choose the thread to move.
 
-The entire thread, including its replies, moves to the chosen range. You can reattach **Uncertain** or **Pending document** threads or move between source files in the same repository. Its ID, comment text, edit history, and resolved state stay intact. Resolved threads remain hidden in the paper editor after moving. Save or cancel an inline comment edit before moving; review-panel drafts are retained.
+The entire thread, including its replies, moves to the chosen range. You can reattach **Uncertain**, **Outdated**, or **Pending document** threads or move between source files in the same repository. Its ID, comment text, edit history, and resolved state stay intact. Resolved threads remain hidden in the paper editor after moving. Save or cancel an inline comment edit before moving; review-panel drafts are retained.
 
 Every successful move is a separate immutable event, including repeated moves to the same destination. **Tracking history** labels it **Manual move** and shows the previous tracking reference and new file, line range, source text, author, and timestamp. The new location becomes the matching reference for subsequent automatic tracking. Location moves are comment edits for synchronization purposes: they trigger one background pull + push when `gitex.autoSyncOnSave` is enabled, and remain local when disabled.
 
@@ -210,7 +217,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.12.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.13.0.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

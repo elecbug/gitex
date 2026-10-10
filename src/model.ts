@@ -57,6 +57,9 @@ export function validAnchor(value: unknown): value is Anchor {
   if (a.tracking !== undefined && (!a.tracking || a.tracking.version !== 1 || !Array.isArray(a.tracking.fragments) ||
       !a.tracking.fragments.length || a.tracking.fragments.length > 1024 || a.tracking.fragments.some(fragment =>
         !fragment || !Number.isSafeInteger(fragment.start) || !Number.isSafeInteger(fragment.end) || fragment.start < 0 || fragment.end <= fragment.start))) { return false; }
+  if (a.tracking?.insertions !== undefined && (!Array.isArray(a.tracking.insertions) || a.tracking.insertions.length > 1024 ||
+      a.tracking.insertions.some(range => !range || !Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) ||
+        range.start < 0 || range.end <= range.start))) { return false; }
   return a.sentenceContext === undefined || (!!a.sentenceContext && !Array.isArray(a.sentenceContext) &&
     typeof a.sentenceContext === 'object' && (['before', 'after'] as const).every(side =>
       typeof a.sentenceContext![side] === 'string' && a.sentenceContext![side].length <= MAX_CONTEXT_LENGTH &&

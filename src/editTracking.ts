@@ -1,9 +1,9 @@
 import { Anchor, createAnchor, documentHash, Location, TextPosition } from './anchor';
 
 export interface Edit { start: number; deleteCount: number; text: string; opaque?: boolean }
-interface Span { start: number; end: number }
+export interface Span { start: number; end: number }
 interface Fragment { range?: Span; gap: number; cut?: { text: string; offset: number; length: number; step: number } }
-interface State { key: string; revision: string; uri: string; text: string; fragments: Fragment[]; step: number }
+interface State { key: string; revision: string; uri: string; text: string; fragments: Fragment[]; insertions?: Fragment[]; step: number; ended?: boolean }
 interface Entry extends State { history: State[] }
 export interface EditTrackingState { version: 1; entries: State[] }
 export const normalizedText = (text: string): string => text.replace(/\r\n/g, '\n');
@@ -24,9 +24,10 @@ function anchorSpan(anchor: Anchor, text: string): Span {
   return { start: offsetAt(text, { line: anchor.startLine, character: anchor.logicalRange?.startCharacter ?? 0 }),
     end: offsetAt(text, { line: anchor.endLine, character: anchor.logicalRange?.endCharacter ?? text.split('\n')[anchor.endLine]?.length ?? 0 }) };
 }
-export function enableEditTracking(anchor: Anchor, text: string, fragments?: Span[]): Anchor {
+export function enableEditTracking(anchor: Anchor, text: string, fragments?: Span[], insertions?: Span[]): Anchor {
   text = normalizedText(text);
-  return { ...anchor, tracking: { version: 1, fragments: fragments ?? [anchorSpan(anchor, text)] } };
+  return { ...anchor, tracking: { version: 1, fragments: fragments ?? [anchorSpan(anchor, text)],
+    ...(insertions?.length ? { insertions } : {}) } };
 }
 
 /** Exact character diff for changes received while the editor was closed. No similarity scoring. */
@@ -77,7 +78,12 @@ export function diffEdits(before: string, after: string): Edit[] {
 }
 
 const copyState = (entry: State): State => ({ key: entry.key, revision: entry.revision, uri: entry.uri, text: entry.text,
-  fragments: structuredClone(entry.fragments), step: entry.step });
+  fragments: structuredClone(entry.fragments), insertions: structuredClone(entry.insertions ?? []), step: entry.step, ...(entry.ended ? { ended: true } : {}) });
+const surviving = (state: State): boolean => state.fragments.some(fragment => fragment.range && state.text.slice(fragment.range.start, fragment.range.end).trim());
+const endedState = (state: State): State => ({ ...copyState(state),
+  fragments: state.fragments.map(({ range, gap }) => ({ range: range ? { ...range } : undefined, gap })),
+  insertions: (state.insertions ?? []).map(({ range, gap }) => ({ range: range ? { ...range } : undefined, gap })),
+  ended: !surviving(state) });
 
 /** Ranges advance only through edit operations from a known document snapshot. */
 export class EditTracking {
@@ -92,28 +98,34 @@ export class EditTracking {
     for (const state of data.entries) {
       if (!state || typeof state.key !== 'string' || typeof state.revision !== 'string' || typeof state.uri !== 'string' ||
           typeof state.text !== 'string' || !Number.isSafeInteger(state.step) || !Array.isArray(state.fragments) ||
-          state.fragments.length > 1024 || state.fragments.some(fragment => !fragment || !Number.isSafeInteger(fragment.gap) ||
+          state.fragments.length > 1024 || state.insertions !== undefined && (!Array.isArray(state.insertions) || state.insertions.length > 1024) ||
+          [...state.fragments, ...state.insertions ?? []].some(fragment => !fragment || !Number.isSafeInteger(fragment.gap) ||
             fragment.gap < 0 || fragment.gap > state.text.length || fragment.range &&
             (!Number.isSafeInteger(fragment.range.start) || !Number.isSafeInteger(fragment.range.end) || fragment.range.start < 0 ||
               fragment.range.end <= fragment.range.start || fragment.range.end > state.text.length))) { continue; }
       // Clipboard matching and undo checkpoints are deliberately session-local.
-      const restored = { ...state, fragments: state.fragments.map(({ range, gap }) => ({ range, gap })) };
+      const restored = endedState(state);
       this.saved.set(state.key, restored); this.live.set(state.key, { ...restored, history: [] });
     }
   }
 
-  snapshot(): EditTrackingState { return { version: 1, entries: [...this.saved.values()] }; }
+  // A saved deletion is final after this session ends; live cut tickets stay intact.
+  snapshot(): EditTrackingState { return { version: 1, entries: [...this.saved.values()].map(endedState) }; }
   has(key: string, revision: string): boolean { return this.live.get(key)?.revision === revision; }
   text(key: string): string | undefined { return this.live.get(key)?.text; }
 
-  private stagingKey(uri: string, anchor: Anchor): string {
-    return `draft:${uri}:${anchor.documentHash}:${JSON.stringify(anchor.tracking?.fragments)}`;
+  private stagingKey(uri: string, anchor: Anchor, sourceKey = ''): string {
+    return `draft:${sourceKey}:${uri}:${anchor.documentHash}:${JSON.stringify(anchor.tracking)}`;
   }
 
   /** Start observing before an input box or asynchronous Git write can change the source. */
-  stage(uri: string, anchor: Anchor, text: string): void {
-    const key = this.stagingKey(uri, anchor);
-    this.seed(key, '', uri, anchor, text); this.staged.add(key);
+  stage(uri: string, anchor: Anchor, text: string, sourceKey?: string): void {
+    const key = this.stagingKey(uri, anchor, sourceKey);
+    const previous = sourceKey ? this.live.get(sourceKey) : undefined;
+    if (previous && previous.uri === uri && previous.text === normalizedText(text)) {
+      this.live.set(key, { ...copyState(previous), key, revision: '', history: previous.history.map(copyState) });
+    } else { this.seed(key, '', uri, anchor, text); }
+    this.staged.add(key);
     if (this.staged.size > 64) {
       const oldest = this.staged.values().next().value!;
       this.staged.delete(oldest); this.live.delete(oldest);
@@ -121,7 +133,8 @@ export class EditTracking {
   }
 
   adopt(key: string, revision: string, uri: string, anchor: Anchor): boolean {
-    const stagedKey = this.stagingKey(uri, anchor), entry = this.live.get(stagedKey);
+    const specific = this.stagingKey(uri, anchor, key);
+    const stagedKey = this.live.has(specific) ? specific : this.stagingKey(uri, anchor), entry = this.live.get(stagedKey);
     if (!entry) { return false; }
     this.live.set(key, { ...copyState(entry), key, revision, history: entry.history.map(state => ({ ...copyState(state), key, revision })) });
     this.live.delete(stagedKey); this.staged.delete(stagedKey);
@@ -132,12 +145,34 @@ export class EditTracking {
     source = normalizedText(source);
     if (documentHash(source) !== anchor.documentHash) { return false; }
     const fragments = anchor.tracking?.fragments ?? [anchorSpan(anchor, source)];
+    const insertions = anchor.tracking?.insertions ?? [];
     const owned = anchorSpan(anchor, source);
     if (source.slice(owned.start, owned.end) !== anchor.selected.join('\n') || !fragments.length || fragments.some(range =>
       !Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) || range.start < 0 || range.end <= range.start ||
       range.end > source.length || !source.slice(range.start, range.end).trim())) { return false; }
-    this.live.set(key, { key, revision, uri, text: source, fragments: fragments.map(range => ({ range: { ...range }, gap: range.start })), step: 0, history: [] });
+    if (insertions.some(range => !Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end) || range.start < 0 || range.end <= range.start ||
+      range.end > source.length || fragments.some(fragment => range.start < fragment.end && range.end > fragment.start))) { return false; }
+    this.live.set(key, { key, revision, uri, text: source, fragments: fragments.map(range => ({ range: { ...range }, gap: range.start })),
+      insertions: insertions.map(range => ({ range: { ...range }, gap: range.start })), step: 0, history: [] });
     return true;
+  }
+
+  /** Finish only the saved state; saving on its own never discards a live cut. */
+  endSession(uri: string): void {
+    for (const entry of this.live.values()) {
+      if (entry.uri !== uri || this.staged.has(entry.key)) { continue; }
+      const saved = this.saved.get(entry.key);
+      if (!saved || saved.revision !== entry.revision || saved.text !== entry.text) { continue; }
+      Object.assign(entry, endedState(entry), { history: [] });
+      this.saved.set(entry.key, copyState(entry)); this.generation++;
+    }
+  }
+
+  highlights(key: string, revision: string, text: string): { owned: Span[]; inserted: Span[] } {
+    const entry = this.live.get(key);
+    if (!entry || entry.revision !== revision || entry.text !== normalizedText(text) || !surviving(entry)) { return { owned: [], inserted: [] }; }
+    const ranges = (fragments: Fragment[]) => fragments.flatMap(fragment => fragment.range ? [{ ...fragment.range }] : []);
+    return { owned: ranges(entry.fragments), inserted: ranges(entry.insertions ?? []) };
   }
 
   change(uri: string, text: string, changes: { range: { start: TextPosition; end: TextPosition }; text: string }[], undoRedo = false): void {
@@ -164,6 +199,7 @@ export class EditTracking {
     if (persist && JSON.stringify(this.saved.get(key)) !== JSON.stringify(copyState(entry))) { this.saved.set(key, copyState(entry)); this.generation++; }
     const first = entry.fragments.find(fragment => fragment.range && text.slice(fragment.range.start, fragment.range.end).trim());
     if (!first?.range) {
+      if (entry.ended) { return { kind: 'outdated', reason: 'The target was removed and the document was saved before its editing session ended. Select text and move this comment to reconnect it.' }; }
       const gap = Math.min(entry.fragments[0]?.gap ?? 0, text.length);
       const position = positionAt(text, gap);
       return { kind: 'uncertain', estimatedLine: position.line, confidence: 1,
@@ -183,14 +219,15 @@ export class EditTracking {
     if (location.kind !== 'attached') { return undefined; }
     const next = createAnchor(anchor.path, text, location.startLine, location.endLine, baseCommit, location.logicalRange);
     const ranges = this.live.get(key)!.fragments.flatMap(fragment => fragment.range && normalizedText(text).slice(fragment.range.start, fragment.range.end).trim() ? [fragment.range] : []);
-    return enableEditTracking(next, text, ranges);
+    const inserted = (this.live.get(key)!.insertions ?? []).flatMap(fragment => fragment.range ? [fragment.range] : []);
+    return enableEditTracking(next, text, ranges, inserted);
   }
 
   private advance(entry: Entry, text: string, edits: Edit[], undoRedo = false): void {
     const old = copyState(entry);
     const restored = undoRedo ? [...entry.history].reverse().find(state => state.text === text) : undefined;
     if (restored) {
-      Object.assign(entry, copyState(restored));
+      Object.assign(entry, copyState(restored), { ended: restored.ended });
     } else {
       let applied = entry.text;
       for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
@@ -212,12 +249,38 @@ export class EditTracking {
       }
       entry.text = text; entry.step++;
     }
+    this.normalizeInsertions(entry);
     entry.history.push(old);
     if (entry.history.length > 32) { entry.history.shift(); }
   }
 
+  private normalizeInsertions(entry: Entry): void {
+    // Pasting an original fragment into an inserted region restores its ownership.
+    // The destination region must not also shade that original text as inserted.
+    const owned = entry.fragments.flatMap(fragment => fragment.range ? [fragment.range] : []);
+    const ranges = (entry.insertions ?? []).flatMap(fragment => {
+      let spans = fragment.range ? [{ ...fragment.range }] : [];
+      for (const range of owned) {
+        spans = spans.flatMap(span => range.end <= span.start || range.start >= span.end ? [span] : [
+          ...(span.start < range.start ? [{ start: span.start, end: range.start }] : []),
+          ...(span.end > range.end ? [{ start: range.end, end: span.end }] : [])
+        ]);
+      }
+      return spans;
+    }).sort((a, b) => a.start - b.start);
+    const merged: Span[] = [];
+    for (const range of ranges) {
+      const last = merged[merged.length - 1];
+      if (last && range.start <= last.end) { last.end = Math.max(last.end, range.end); }
+      else { merged.push(range); }
+    }
+    // Keep detached insertion tickets so a later paste can still restore their color.
+    entry.insertions = [...(entry.insertions ?? []).filter(fragment => !fragment.range),
+      ...merged.map(range => ({ range, gap: range.start }))];
+  }
+
   private paste(entry: Entry, text: string, at: number): void {
-    const matches = entry.fragments.filter(fragment => !fragment.range && fragment.cut?.text === text && entry.step - fragment.cut.step <= 100);
+    const matches = [...entry.fragments, ...entry.insertions ?? []].filter(fragment => !fragment.range && fragment.cut?.text === text);
     // Only the most recent deletion with this content can supply a move.
     const step = Math.max(-1, ...matches.map(fragment => fragment.cut!.step));
     for (const fragment of matches.filter(fragment => fragment.cut!.step === step)) {
@@ -232,6 +295,20 @@ export class EditTracking {
     const removed = entry.text.slice(a, b);
     const next: Fragment[] = [];
     const gapAt = (gap: number) => gap <= a ? gap : gap >= b ? gap + delta : a;
+    // Inserted regions retain their distinct provenance through subsequent edits and cuts.
+    entry.insertions = (entry.insertions ?? []).flatMap(fragment => {
+      if (!fragment.range) { return [{ ...fragment, gap: gapAt(fragment.gap) }]; }
+      const { start, end } = fragment.range;
+      if (b < start || b === start && edit.deleteCount > 0) { return [{ ...fragment, range: { start: start + delta, end: end + delta }, gap: start + delta }]; }
+      if (a > end || a === end && edit.deleteCount > 0) { return [fragment]; }
+      if (a <= start && b >= end && edit.deleteCount) {
+        if (!length) { return [{ gap: a, cut: { text: removed, offset: start - a, length: end - start, step: entry.step } }]; }
+        // Broad replacements cannot turn surrounding original text into inserted text.
+        return a === start && b === end ? [{ range: { start: a, end: a + length }, gap: a }] : [];
+      }
+      const updated = { start: Math.min(start, a), end: end >= b ? end + delta : a + length };
+      return updated.end > updated.start ? [{ range: updated, gap: updated.start }] : [];
+    });
     for (const fragment of entry.fragments) {
       const range = fragment.range;
       if (!range) { next.push({ ...fragment, gap: gapAt(fragment.gap) }); continue; }
@@ -241,6 +318,7 @@ export class EditTracking {
       if (!edit.deleteCount && !edit.text.trim()) {
         next.push({ range: { start, end: end + length }, gap: start }); continue;
       }
+      if (!edit.deleteCount && edit.text.trim()) { entry.insertions.push({ range: { start: a, end: a + length }, gap: a }); }
       // A replacement wholly inside the target proves continuity by its edit range.
       if (edit.deleteCount && length && !edit.opaque && a >= start && b <= end) {
         next.push({ range: { start, end: end + delta }, gap: start }); continue;

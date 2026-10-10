@@ -25,8 +25,8 @@ export class ReviewPanel implements vscode.Disposable {
   private ready = false;
   private readonly drafts = new Map<string, { key: string; commentId: string; body: string; basedOn: string }>();
 
-  constructor(extensionUri: vscode.Uri, public key: string, onAction: (key: string, action: ReviewAction) => Promise<void>, onClose: () => void) {
-    this.panel = vscode.window.createWebviewPanel('gitex.review', 'GiTex Review', vscode.ViewColumn.Beside,
+  constructor(extensionUri: vscode.Uri, public key: string, onAction: (key: string, action: ReviewAction) => Promise<void>, onClose: () => void, preserveFocus = false) {
+    this.panel = vscode.window.createWebviewPanel('gitex.review', 'GiTex Review', { viewColumn: vscode.ViewColumn.Beside, preserveFocus },
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')] });
     const nonce = randomBytes(16).toString('hex');
     const script = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'review.js'));
