@@ -285,3 +285,39 @@ test('moving inserted text inside an original fragment does not duplicate insert
   assert.deepEqual(colors.owned.map(range => f.text.slice(range.start, range.end)), ['Al', 'pha ', 'beta.']);
   assert.deepEqual(colors.inserted, [{ start: 2, end: 6 }]);
 });
+
+test('pending paper versions freeze tracking and cannot publish or shade an older document', () => {
+  const f = fixture('Before. Target text. After.', 'Target text.');
+  const head = 'a'.repeat(40);
+  f.tracker.resume('thread', 'revision', head);
+  f.tracker.locate('thread', 'revision', f.text, true);
+  const saved = new EditTracking(f.tracker.snapshot());
+  assert.equal(saved.paperHead('thread'), head);
+  f.tracker.suspend('thread');
+  edit(f, 0, f.text.length, 'An earlier unrelated paper.');
+  assert.equal(f.tracker.locate('thread', 'revision', f.text, true).kind, 'pending');
+  assert.deepEqual(f.tracker.highlights('thread', 'revision', f.text), { owned: [], inserted: [] });
+  assert.equal(reference(f), undefined);
+  assert.equal(f.tracker.text('thread'), 'Before. Target text. After.');
+  f.text = 'Introduction. Before. Target text. After.';
+  f.tracker.resume('thread', 'revision', head);
+  assert.deepEqual(reference(f).selected, ['Target text.']);
+});
+
+test('a shared reference with unchanged geometry preserves live cut tickets and final outdated state', () => {
+  const f = fixture('Before. Target text. After.\n', 'Target text.');
+  edit(f, 8, 12, '');
+  assert.equal(f.tracker.rebind('thread', 'revision', 'reply'), true);
+  const at = f.text.length;
+  f.tracker.change('main.tex', f.text + 'Target text.', [{ range: { start: positionAt(f.text, at), end: positionAt(f.text, at) }, text: 'Target text.' }]);
+  f.text += 'Target text.';
+  const location = f.tracker.locate('thread', 'reply', f.text);
+  assert.equal(location.kind, 'attached');
+  if (location.kind === 'attached') { assert.equal(location.startLine, 1); }
+  f.tracker.change('main.tex', f.text.slice(0, at), [{ range: { start: positionAt(f.text, at), end: positionAt(f.text, f.text.length) }, text: '' }]);
+  f.text = f.text.slice(0, at);
+  f.tracker.locate('thread', 'reply', f.text, true); f.tracker.endSession('main.tex');
+  assert.equal(f.tracker.rebind('thread', 'reply', 'second-reply'), true);
+  assert.equal(f.tracker.locate('thread', 'second-reply', f.text).kind, 'outdated');
+  assert.equal(new EditTracking(f.tracker.snapshot()).locate('thread', 'second-reply', f.text).kind, 'outdated');
+});

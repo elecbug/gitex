@@ -54,7 +54,7 @@ Automatic sync runs once after saving a comment, reply, edit, or manual location
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.13.0.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.13.2.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -112,11 +112,13 @@ Resolving a thread with an unsaved inline edit keeps the draft recoverable in th
 
 ## Tracking through editor edits
 
-GiTex 0.13.0 follows ranges through VS Code's edit events. Text inserted before a selection shifts its endpoints; text appended at its end stays outside the comment. A same-file cut followed by an exact paste moves the range to the pasted position. Copies do not move attached comments. Undo and redo restore previous ranges.
+GiTex 0.13.2 follows ranges through VS Code's edit events. Text inserted before a selection shifts its endpoints; text appended at its end stays outside the comment. A same-file cut followed by an exact paste moves the range to the pasted position. Copies do not move attached comments. Undo and redo restore previous ranges.
 
 A line break or whitespace inserted inside the target keeps one multi-line range. Other inserted text splits it: GiTex shows the comment on the leading surviving fragment while retaining the complete **Original selection** and the other fragments. Replies and edits can publish the current reference without replacing that original identity. Only an explicit manual move establishes a new identity; previous identities remain in **Tracking history**.
 
 When the entire target is deleted, an **Uncertain** marker retains its edit position for the current editing session. Saving does not expire the cut: pasting in the same session moves the comment. If the target is still absent from the saved source when its last text tab closes, or when VS Code restarts, the comment becomes **Outdated** and remains only in Explorer and Review. When reviews arrive ahead of the paper, **Pending document** appears in Explorer and Review and the thread is hidden from the editor. Pull the paper through Source Control; **Sync Comments** only receives and publishes reviews. GiTex checks the exact current document or the paper branch's history before replaying changes from a newly received reference.
+
+Document and comment synchronization may finish in either order. GiTex rechecks previously attached comments after switching paper versions. A pull that updates disk while an old unsaved editor stays open keeps newer comments pending: reconcile your unsaved changes with the pulled file first. Draft references can also attach after a later commit adds surrounding text, provided their complete changes can be proved against the common base. Pending replies preserve the existing reference, and source edits during comment saving are included in the newly captured document. See the [synchronization scenarios](docs/anchor-tracking.md#6-comments-arriving-before-the-paper).
 
 Comment metadata now includes a deduplicated snapshot of the whole annotated source document, including unsaved source edits. These snapshots establish document versions across clients. Existing events remain readable, but all collaborators must use **GiTex 0.12.0 or later** once the metadata archive uses format 2. Older comments without a recoverable source snapshot may require **Move to editor selection**.
 
@@ -217,7 +219,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.13.0.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.13.2.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

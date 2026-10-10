@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Anchor, documentHash } from './anchor';
 import { Git, GitError } from './git';
 import { Author, materialize, parseEvent, ReviewEvent, ReviewThread } from './model';
+import { snapshotChangesPresent } from './documentSync';
 
 export const LOCAL_REF = 'refs/gitex/comments';
 export const REMOTE_REF = 'refs/heads/gitex-comments';
@@ -51,12 +52,27 @@ export class ReviewStore {
   }
 
   /** A comment snapshot must have reached this paper's branch before replaying later edits. */
-  async documentAvailable(anchor: Anchor, text: string): Promise<boolean> {
-    if (!await this.head()) { return false; }
+  async isAncestor(before: string | null, after: string | null): Promise<boolean> {
+    if (before === after) { return true; }
+    if (!before || !after) { return before === after; }
+    return (await this.git.run(['merge-base', '--is-ancestor', before, after])).code === 0;
+  }
+
+  async documentAvailable(anchor: Anchor, text: string, head?: string | null): Promise<boolean> {
+    head = head === undefined ? await this.head() : head;
+    if (!head || documentHash(text) !== anchor.documentHash) { return false; }
     for (const content of new Set([text, text.replace(/\n/g, '\r\n')])) {
       const oid = await this.git.text(['hash-object', '--stdin'], content);
-      const history = await this.git.run(['log', '--format=%H', '--max-count=1', `--find-object=${oid}`, 'HEAD', '--', anchor.path]);
+      const history = await this.git.run(['log', '--format=%H', '--max-count=1', `--find-object=${oid}`, head, '--', anchor.path]);
       if (history.code === 0 && history.stdout.toString('utf8').trim()) { return true; }
+    }
+    // A review may be saved before the author finishes the paper commit. Require
+    // every draft edit at its original base coordinate; a matching sentence alone
+    // does not prove that the receiver has this version of the document.
+    if (anchor.baseCommit && await this.isAncestor(anchor.baseCommit, head)) {
+      const base = await this.git.run(['show', `${anchor.baseCommit}:${anchor.path}`]);
+      const current = await this.git.run(['show', `${head}:${anchor.path}`]);
+      if (base.code === 0 && current.code === 0 && snapshotChangesPresent(base.stdout.toString('utf8'), text, current.stdout.toString('utf8'))) { return true; }
     }
     return false;
   }

@@ -8,6 +8,7 @@ import { Git } from '../src/git';
 import { EditTracking, enableEditTracking } from '../src/editTracking';
 import { materialize, parseEvent, validPath } from '../src/model';
 import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../src/store';
+import { snapshotChangesPresent } from '../src/documentSync';
 
 const paper = '\\documentclass{article}\n\\begin{document}\nA shared result.\n\\end{document}\n';
 
@@ -478,6 +479,40 @@ test('document snapshots deduplicate, synchronize independently, and wait for th
   assert.deepEqual((await a.threads()).find(thread => thread.id === first)!.identityAnchor, received.identityAnchor);
   assert.equal(await a.documentText(anchor), future);
   await assert.rejects(a.create(anchor, 'Wrong snapshot', 'Not the paper'), /snapshot does not match/);
+});
+
+test('uncommitted review snapshots are recognized after a later augmented paper commit, never by fetch alone', async t => {
+  const { a, b } = await fixture(t);
+  const oldHead = await b.head();
+  const draft = paper.replace('A shared result.', 'The reviewed new result.');
+  const anchor = enableEditTracking(createAnchor('main.tex', draft, 2, 2, await a.head()), draft);
+  await a.create(anchor, 'Review before finishing this commit', draft);
+  await a.sync(); await b.pull();
+  assert.equal(await b.documentAvailable(anchor, draft), false);
+  const committed = '% Additional introduction\n' + draft + '% Final notes\n';
+  await writeFile(path.join(a.root, 'main.tex'), committed);
+  await a.git.text(['add', 'main.tex']);
+  await a.git.text(['-c', 'commit.gpgsign=false', 'commit', '-m', 'Complete reviewed draft']);
+  await a.git.text(['push', 'origin', 'main']);
+  await b.git.text(['fetch', 'origin', 'main']);
+  assert.equal(await b.documentAvailable(anchor, draft), false);
+  await b.git.text(['pull', '--ff-only', 'origin', 'main']);
+  assert.equal(await b.documentAvailable(anchor, draft), true, 'the exact draft blob need never be committed');
+  assert.equal(await b.documentAvailable(anchor, draft, oldHead), false, 'a dirty buffer can still belong to the previous paper');
+  await b.git.text(['checkout', '--detach', oldHead!]);
+  assert.equal(await b.documentAvailable(anchor, draft), false, 'a checkout must not borrow proof from another branch');
+});
+
+test('draft receipt requires every exact base-relative edit and rejects partial or unrelated lookalikes', () => {
+  const base = 'One old result.\nAn old conclusion.\n';
+  const snapshot = 'One NEW result.\nAn UPDATED conclusion.\n';
+  assert.equal(snapshotChangesPresent(base, snapshot, '% Intro\n' + snapshot + '% End\n'), true);
+  assert.equal(snapshotChangesPresent(base, snapshot, 'One NEW result.\nAn old conclusion.\n'), false);
+  assert.equal(snapshotChangesPresent(base, snapshot, base + snapshot), false);
+  assert.equal(snapshotChangesPresent(base, snapshot, base), false);
+  assert.equal(snapshotChangesPresent(base, base, base), false, 'unchanged content needs historical proof');
+  assert.equal(snapshotChangesPresent('a'.repeat(2500), 'b'.repeat(2500), 'b'.repeat(2500) + '\n'), true, 'an exact whole-line replacement can prove a long draft');
+  assert.equal(snapshotChangesPresent('a'.repeat(2500), 'b'.repeat(2500), 'c'.repeat(2500)), false, 'an unrelated replacement is never proof');
 });
 
 test('concurrent snapshot archives retain both documents and all reviews', async t => {

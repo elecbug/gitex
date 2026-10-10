@@ -11,9 +11,11 @@ import { inlineSyncTests } from './inlineSync';
 import { blankLineTests } from './blankLines';
 import { editTrackingTests } from './editTracking';
 import { highlightTests } from './highlights';
+import { documentSyncTests } from './documentSync';
 
 export async function run(): Promise<void> {
-  const extension = vscode.extensions.getExtension('gitex-local.gitex');
+  const metadata = require('../../../package.json');
+  const extension = vscode.extensions.getExtension(`${metadata.publisher}.${metadata.name}`);
   assert.ok(extension, 'the development extension must be discoverable');
   const app = await extension.activate();
   assert.ok(extension.isActive);
@@ -128,6 +130,7 @@ export async function run(): Promise<void> {
   await blankLineTests(app, store);
   await editTrackingTests(app, store);
   await highlightTests(app, store);
+  await documentSyncTests(app, store);
   await repositoryTests(app, store);
   console.log('GiTex extension host: applying repositories, unsaved-file protection, save-only sync, editing, history, drafts, and anchoring passed.');
 }

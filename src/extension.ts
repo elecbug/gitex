@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { Anchor, createSelectionAnchor, documentHash, EstimateCandidate, Location, locationEstimates } from './anchor';
 import { EditTracking, enableEditTracking, normalizedText, positionAt } from './editTracking';
 import { redact } from './git';
@@ -54,6 +54,9 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private readonly tree: vscode.TreeView<ThreadItem>;
   private readonly editTracking: EditTracking;
   private readonly documentProofs = new Map<string, Promise<boolean>>();
+  private readonly bufferHeads = new WeakMap<vscode.TextDocument, string | null>();
+  private readonly watchedRoots = new Set<string>();
+  private readonly documentChanges = new Map<string, Promise<void>>();
   private localSavedGeneration = 0;
   private localSaving: Promise<void> = Promise.resolve();
   private readonly locations = new WeakMap<vscode.TextDocument, { version: number; entries: Map<string, { reference: string; location: Location }> }>();
@@ -101,20 +104,21 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       vscode.workspace.onDidOpenTextDocument(document => { if (document.uri.scheme === 'file') { this.schedule(); } }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (event.contentChanges.length && supported.test(event.document.uri.fsPath)) {
-          this.editTracking.change(event.document.uri.toString(), event.document.getText(), [...event.contentChanges], event.reason !== undefined);
-          this.trackDocument(event.document); this.renderHighlights(); this.schedule();
+          this.queueDocumentChange(event);
         }
       }),
-      vscode.workspace.onDidSaveTextDocument(document => {
+      vscode.workspace.onDidSaveTextDocument(async document => {
+        await this.documentChanges.get(document.uri.toString());
         this.trackDocument(document, true); void this.persistLocalTracking(); this.schedule();
       }),
       vscode.window.onDidChangeActiveTextEditor(editor => this.selectEditor(editor)),
       vscode.window.onDidChangeVisibleTextEditors(() => { this.renderUncertainLocations(); this.renderHighlights(); }),
       vscode.window.onDidChangeTextEditorSelection(event => { void this.openHighlightedComment(event).catch(error => this.report(error)); }),
-      vscode.window.tabGroups.onDidChangeTabs(event => {
+      vscode.window.tabGroups.onDidChangeTabs(async event => {
         for (const tab of event.closed) {
           if (!(tab.input instanceof vscode.TabInputText)) { continue; }
           const uri = tab.input.uri.toString();
+          await this.documentChanges.get(uri);
           if (vscode.window.tabGroups.all.some(group => group.tabs.some(current => current.input instanceof vscode.TabInputText && current.input.uri.toString() === uri))) { continue; }
           this.editTracking.endSession(uri);
           for (const item of this.items.filter(item => item.uri.toString() === uri)) { this.dirtyRepositories.add(item.repository.store.root); }
@@ -210,16 +214,25 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file');
     const folderFor = (root: string) => vscode.workspace.getWorkspaceFolder(vscode.Uri.file(root)) ??
       folders.find(folder => within(root, folder.uri.fsPath));
-    const register = (root: string) => {
+    const register = async (root: string) => {
       const folder = folderFor(root);
       if (!folder) { return; }
       const repository = this.repositories.get(root) ?? { store: new ReviewStore(root), folder };
       repository.folder = folder; this.repositories.set(root, repository);
+      if (!this.watchedRoots.has(root)) {
+        const dirs = await repository.store.git.text(['rev-parse', '--absolute-git-dir', '--git-common-dir']);
+        for (const dir of new Set(dirs.split('\n').map(dir => path.resolve(root, dir)))) {
+          const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(dir, '{HEAD,packed-refs,shallow,refs/heads/**}'));
+          const changed = () => { this.documentProofs.clear(); this.dirtyRepositories.add(root); this.schedule(); };
+          this.context.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed));
+        }
+        this.watchedRoots.add(root);
+      }
     };
     if (this.scannedVersion !== this.discoveryVersion) {
       const version = this.discoveryVersion;
       const roots = new Set(await discoverRepositories(folders.map(folder => folder.uri.fsPath)));
-      for (const root of roots) { register(root); }
+      for (const root of roots) { await register(root); }
       for (const root of this.repositories.keys()) { if (!roots.has(root)) { this.repositories.delete(root); } }
       this.scannedVersion = version; this.ownerDirty = true;
     }
@@ -230,7 +243,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       // A cheap Git probe on file switches catches newly cloned/nested repositories even if a watcher missed them.
       const root = uri.scheme === 'file' && vscode.workspace.getWorkspaceFolder(uri) ? await findRepository(path.dirname(uri.fsPath)) : undefined;
       if (root) {
-        register(root);
+        await register(root);
         // A removed nested .git must not keep claiming this file through the cached root list.
         for (const previous of this.repositories.keys()) {
           if (previous !== root && within(root, previous) && within(previous, uri.fsPath)) { this.repositories.delete(previous); }
@@ -286,22 +299,91 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     }
   }
 
-  private async prepareReview(repository: Repository, review: ReviewThread, document: vscode.TextDocument): Promise<void> {
-    const key = `${repository.store.root}:${review.id}`;
-    if (this.editTracking.has(key, review.anchorRevision) || this.editTracking.adopt(key, review.anchorRevision, document.uri.toString(), review.anchor)) { return; }
-    const text = document.getText();
-    if (documentHash(text) === review.anchor.documentHash) {
-      this.editTracking.seed(key, review.anchorRevision, document.uri.toString(), review.anchor, text); return;
-    }
-    const source = await repository.store.documentText(review.anchor);
-    if (source === undefined) { return; }
-    const proofKey = `${repository.store.root}:${await repository.store.head()}:${review.anchor.path}:${review.anchor.documentHash}`;
-    let proof = this.documentProofs.get(proofKey);
+  private queueDocumentChange(event: vscode.TextDocumentChangeEvent): void {
+    const { document } = event, uri = document.uri.toString();
+    const text = document.getText(), version = document.version;
+    const changes = [...event.contentChanges], undoRedo = event.reason !== undefined;
+    const maybeReload = document.uri.scheme === 'file' && !document.isDirty && !undoRedo;
+    const previous = this.documentChanges.get(uri) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      // VS Code may emit an edit before updating isDirty. Compare with disk before
+      // treating it as a reload; otherwise an ordinary first keystroke gets lost.
+      if (maybeReload) {
+        const disk = await readFile(document.uri.fsPath, 'utf8').catch(() => undefined);
+        if (disk !== undefined && normalizedText(disk) === normalizedText(text)) { this.editTracking.suspendDocument(uri); }
+      }
+      this.editTracking.change(uri, text, changes, undoRedo);
+      if (document.version === version) { this.trackDocument(document); this.renderHighlights(); }
+      this.schedule();
+    }).catch(error => this.report(error));
+    this.documentChanges.set(uri, next);
+    void next.then(() => { if (this.documentChanges.get(uri) === next) { this.documentChanges.delete(uri); } });
+  }
+
+  private cachedDocumentProof(key: string, check: () => Promise<boolean>): Promise<boolean> {
+    let proof = this.documentProofs.get(key);
     if (!proof) {
-      proof = repository.store.documentAvailable(review.anchor, source); this.documentProofs.set(proofKey, proof);
+      proof = check().catch(error => { this.documentProofs.delete(key); throw error; });
+      this.documentProofs.set(key, proof);
       if (this.documentProofs.size > 256) { this.documentProofs.delete(this.documentProofs.keys().next().value!); }
     }
-    if (await proof) { this.editTracking.seed(key, review.anchorRevision, document.uri.toString(), review.anchor, source); }
+    return proof;
+  }
+
+  private async rememberBufferHead(document: vscode.TextDocument, head: string | null): Promise<void> {
+    if (document.isDirty || this.bufferHeads.get(document) === head) { return; }
+    const version = document.version, text = normalizedText(document.getText());
+    const disk = await readFile(document.uri.fsPath, 'utf8').catch(() => undefined);
+    // HEAD can advance before VS Code reloads a clean buffer from disk.
+    if (disk !== undefined && document.version === version && !document.isDirty && normalizedText(disk) === text) { this.bufferHeads.set(document, head); }
+  }
+
+  private async prepareReview(repository: Repository, review: ReviewThread, document: vscode.TextDocument, attempt = 0, paper?: { head: string | null }): Promise<void> {
+    await this.documentChanges.get(document.uri.toString());
+    const key = `${repository.store.root}:${review.id}`;
+    const head = paper ? paper.head : await repository.store.head();
+    await this.rememberBufferHead(document, head);
+    const version = document.version;
+    const text = document.getText();
+    // A pull can update HEAD and the disk while a dirty editor still holds the
+    // previous paper. That buffer retains its last clean paper lineage.
+    const bufferHead = this.bufferHeads.get(document);
+    if (this.editTracking.adopt(key, review.anchorRevision, document.uri.toString(), review.anchor)) {
+      this.editTracking.resume(key, review.anchorRevision, bufferHead ?? head); return;
+    }
+    const previous = this.items.find(item => item.key === key)?.review;
+    if (previous && previous.anchorRevision !== review.anchorRevision) {
+      const geometry = (anchor: Anchor) => JSON.stringify([anchor.path, anchor.documentHash, anchor.startLine, anchor.endLine, anchor.logicalRange, anchor.tracking]);
+      const identity = (thread: ReviewThread) => thread.anchorHistory.filter(entry => entry.kind === 'move').at(-1)?.id ?? thread.id;
+      if (geometry(previous.anchor) === geometry(review.anchor) && identity(previous) === identity(review)) {
+        this.editTracking.rebind(key, previous.anchorRevision, review.anchorRevision);
+      }
+    }
+    const known = this.editTracking.has(key, review.anchorRevision);
+    const receiptHead = this.editTracking.paperHead(key);
+    const paperHead = bufferHead === undefined && document.isDirty && known ? receiptHead : bufferHead;
+    const sameLineage = known && (receiptHead === undefined ? this.editTracking.text(key) === normalizedText(text) :
+      paperHead !== undefined && (receiptHead === paperHead || await this.cachedDocumentProof(`${repository.store.root}:lineage:${receiptHead}:${paperHead}`,
+        () => repository.store.isAncestor(receiptHead, paperHead))));
+    let source: string | undefined;
+    let received = sameLineage;
+    if (!received && documentHash(text) === review.anchor.documentHash) { source = text; received = true; }
+    if (!received) {
+      source = await repository.store.documentText(review.anchor);
+      if (source !== undefined && paperHead !== undefined) {
+        const proofKey = `${repository.store.root}:${paperHead}:${review.anchor.baseCommit}:${review.anchor.path}:${review.anchor.documentHash}`;
+        received = await this.cachedDocumentProof(proofKey, () => repository.store.documentAvailable(review.anchor, source!, paperHead));
+      }
+    }
+    if (document.version !== version || !paper && await repository.store.head() !== head) {
+      this.editTracking.suspend(key);
+      if (attempt < 2) { await this.prepareReview(repository, review, document, attempt + 1); }
+      else { this.schedule(); }
+      return;
+    }
+    if (received && (sameLineage || source !== undefined && this.editTracking.seed(key, review.anchorRevision, document.uri.toString(), review.anchor, source))) {
+      this.editTracking.resume(key, review.anchorRevision, paperHead ?? head);
+    } else { this.editTracking.suspend(key); }
   }
 
   private locateReview(repository: Repository, review: ReviewThread, document: vscode.TextDocument, force = false): Location {
@@ -347,11 +429,17 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       if (!loaded.has(repository.store.root)) { next.push(...previous); continue; }
       this.dirtyRepositories.delete(repository.store.root);
       let reviews: ReviewThread[];
-      try { reviews = await repository.store.threads(); }
+      let head: string | null;
+      try { head = await repository.store.head(); reviews = await repository.store.threads(); }
       catch (error) {
         if (repository.store.root === this.activeRoot) { throw error; }
         this.output.appendLine(`Unable to refresh ${repository.store.root}: ${redact(String(error))}`);
         next.push(...previous); continue;
+      }
+      // Remember clean buffers even before their first comment arrives, so later
+      // metadata can be checked against the base of an ongoing local edit.
+      for (const document of vscode.workspace.textDocuments) {
+        if (this.repositoryFor(document.uri) === repository && supported.test(document.uri.fsPath)) { await this.rememberBufferHead(document, head); }
       }
       for (const review of reviews) {
         const uri = vscode.Uri.file(path.join(repository.store.root, review.anchor.path));
@@ -360,10 +448,19 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
           const documentKey = `${repository.store.root}:${uri.toString()}`;
           if (!documents.has(documentKey)) { documents.set(documentKey, this.document(uri, repository)); }
           const document = await documents.get(documentKey)!;
-          await this.prepareReview(repository, review, document);
+          await this.prepareReview(repository, review, document, 0, { head });
           location = this.locateReview(repository, review, document, true);
         } catch { location = { kind: 'pending', reason: 'Pending document · Pull the paper source. The referenced file is missing or unavailable in this working copy.' }; }
         next.push({ key: `${repository.store.root}:${review.id}`, repository, review, uri, location });
+      }
+      // Check one immutable paper tip per repository, not two Git reads per thread.
+      // A concurrent checkout invalidates this whole display pass before rendering.
+      if (await repository.store.head() !== head) {
+        for (const item of next.filter(item => item.repository === repository)) {
+          this.editTracking.suspend(item.key);
+          item.location = { kind: 'pending', reason: 'Pending document · The paper version is changing. GiTex will check again after the update finishes.' };
+        }
+        this.schedule();
       }
     }
     if (this.disposed) { return; }
@@ -476,7 +573,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private highlightedRanges(document: vscode.TextDocument): { item: ThreadItem; range: vscode.Range; inserted: boolean }[] {
     if (document.uri.scheme !== 'file' || !supported.test(document.uri.fsPath)) { return []; }
     const text = normalizedText(document.getText());
-    return this.getChildren().filter(item => !item.review.resolved && item.uri.toString() === document.uri.toString()).flatMap(item => {
+    return this.getChildren().filter(item => !item.review.resolved && item.location.kind !== 'pending' && item.uri.toString() === document.uri.toString()).flatMap(item => {
       const highlights = this.editTracking.highlights(item.key, item.review.anchorRevision, text);
       return [...highlights.owned.map(range => ({ ...range, inserted: false })), ...highlights.inserted.map(range => ({ ...range, inserted: true }))]
         .map(span => {
@@ -543,12 +640,13 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
 
   private async anchor(repository: Repository, document: vscode.TextDocument, range: vscode.Range) {
     const text = document.getText();
+    const bufferHead = this.bufferHeads.get(document);
     const relative = path.relative(repository.store.root, document.uri.fsPath).split(path.sep).join('/');
     if (!validPath(relative)) { throw new Error('This file cannot be annotated.'); }
     const anchor = enableEditTracking(createSelectionAnchor(relative, text, range, null), text);
     this.editTracking.stage(document.uri.toString(), anchor, text);
     await this.document(document.uri, repository);
-    anchor.baseCommit = await repository.store.head();
+    anchor.baseCommit = bufferHead === undefined ? await repository.store.head() : bufferHead;
     return { anchor, text };
   }
 
@@ -572,11 +670,13 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private async currentAnchor(item: ThreadItem): Promise<{ anchor: Anchor; basedOn: string; text: string } | undefined> {
     const review = (await item.repository.store.threads()).find(review => review.id === item.review.id);
     if (!review) { return undefined; }
-    const head = await item.repository.store.head();
     let document: vscode.TextDocument;
     try { document = await this.document(vscode.Uri.file(path.join(item.repository.store.root, review.anchor.path)), item.repository); } catch { return undefined; }
-    const text = document.getText();
     await this.prepareReview(item.repository, review, document);
+    await this.documentChanges.get(document.uri.toString());
+    const receiptHead = this.editTracking.paperHead(item.key);
+    const head = receiptHead === undefined ? await item.repository.store.head() : receiptHead;
+    const text = document.getText();
     const anchor = this.editTracking.reference(item.key, review.anchorRevision, review.anchor, text, head);
     if (anchor) { this.editTracking.stage(document.uri.toString(), anchor, text, item.key); }
     return anchor ? { anchor, basedOn: review.anchorRevision, text } : undefined;

@@ -3,7 +3,7 @@ import { Anchor, createAnchor, documentHash, Location, TextPosition } from './an
 export interface Edit { start: number; deleteCount: number; text: string; opaque?: boolean }
 export interface Span { start: number; end: number }
 interface Fragment { range?: Span; gap: number; cut?: { text: string; offset: number; length: number; step: number } }
-interface State { key: string; revision: string; uri: string; text: string; fragments: Fragment[]; insertions?: Fragment[]; step: number; ended?: boolean }
+interface State { key: string; revision: string; uri: string; text: string; fragments: Fragment[]; insertions?: Fragment[]; step: number; ended?: boolean; paperHead?: string | null }
 interface Entry extends State { history: State[] }
 export interface EditTrackingState { version: 1; entries: State[] }
 export const normalizedText = (text: string): string => text.replace(/\r\n/g, '\n');
@@ -78,7 +78,8 @@ export function diffEdits(before: string, after: string): Edit[] {
 }
 
 const copyState = (entry: State): State => ({ key: entry.key, revision: entry.revision, uri: entry.uri, text: entry.text,
-  fragments: structuredClone(entry.fragments), insertions: structuredClone(entry.insertions ?? []), step: entry.step, ...(entry.ended ? { ended: true } : {}) });
+  fragments: structuredClone(entry.fragments), insertions: structuredClone(entry.insertions ?? []), step: entry.step,
+  ...(entry.paperHead !== undefined ? { paperHead: entry.paperHead } : {}), ...(entry.ended ? { ended: true } : {}) });
 const surviving = (state: State): boolean => state.fragments.some(fragment => fragment.range && state.text.slice(fragment.range.start, fragment.range.end).trim());
 const endedState = (state: State): State => ({ ...copyState(state),
   fragments: state.fragments.map(({ range, gap }) => ({ range: range ? { ...range } : undefined, gap })),
@@ -90,6 +91,7 @@ export class EditTracking {
   private readonly live = new Map<string, Entry>();
   private readonly saved = new Map<string, State>();
   private readonly staged = new Set<string>();
+  private readonly suspended = new Set<string>();
   generation = 0;
 
   constructor(snapshot?: unknown) {
@@ -98,6 +100,7 @@ export class EditTracking {
     for (const state of data.entries) {
       if (!state || typeof state.key !== 'string' || typeof state.revision !== 'string' || typeof state.uri !== 'string' ||
           typeof state.text !== 'string' || !Number.isSafeInteger(state.step) || !Array.isArray(state.fragments) ||
+          state.paperHead !== undefined && state.paperHead !== null && !/^[a-f0-9]{40}([a-f0-9]{24})?$/.test(state.paperHead) ||
           state.fragments.length > 1024 || state.insertions !== undefined && (!Array.isArray(state.insertions) || state.insertions.length > 1024) ||
           [...state.fragments, ...state.insertions ?? []].some(fragment => !fragment || !Number.isSafeInteger(fragment.gap) ||
             fragment.gap < 0 || fragment.gap > state.text.length || fragment.range &&
@@ -113,6 +116,23 @@ export class EditTracking {
   snapshot(): EditTrackingState { return { version: 1, entries: [...this.saved.values()].map(endedState) }; }
   has(key: string, revision: string): boolean { return this.live.get(key)?.revision === revision; }
   text(key: string): string | undefined { return this.live.get(key)?.text; }
+  paperHead(key: string): string | null | undefined { return this.live.get(key)?.paperHead; }
+  rebind(key: string, before: string, after: string): boolean {
+    const entry = this.live.get(key);
+    if (entry?.revision !== before) { return false; }
+    entry.revision = after;
+    for (const state of entry.history) { state.revision = after; }
+    const saved = this.saved.get(key);
+    if (saved?.revision === before) { saved.revision = after; this.generation++; }
+    return true;
+  }
+  suspend(key: string): void { this.suspended.add(key); }
+  suspendDocument(uri: string): void { for (const entry of this.live.values()) { if (entry.uri === uri && !this.staged.has(entry.key)) { this.suspend(entry.key); } } }
+  resume(key: string, revision: string, head: string | null): void {
+    const entry = this.live.get(key);
+    if (entry?.revision !== revision) { return; }
+    entry.paperHead = head; this.suspended.delete(key);
+  }
 
   private stagingKey(uri: string, anchor: Anchor, sourceKey = ''): string {
     return `draft:${sourceKey}:${uri}:${anchor.documentHash}:${JSON.stringify(anchor.tracking)}`;
@@ -170,7 +190,7 @@ export class EditTracking {
 
   highlights(key: string, revision: string, text: string): { owned: Span[]; inserted: Span[] } {
     const entry = this.live.get(key);
-    if (!entry || entry.revision !== revision || entry.text !== normalizedText(text) || !surviving(entry)) { return { owned: [], inserted: [] }; }
+    if (this.suspended.has(key) || !entry || entry.revision !== revision || entry.text !== normalizedText(text) || !surviving(entry)) { return { owned: [], inserted: [] }; }
     const ranges = (fragments: Fragment[]) => fragments.flatMap(fragment => fragment.range ? [{ ...fragment.range }] : []);
     return { owned: ranges(entry.fragments), inserted: ranges(entry.insertions ?? []) };
   }
@@ -178,7 +198,7 @@ export class EditTracking {
   change(uri: string, text: string, changes: { range: { start: TextPosition; end: TextPosition }; text: string }[], undoRedo = false): void {
     text = normalizedText(text);
     for (const entry of this.live.values()) {
-      if (entry.uri !== uri || entry.text === text) { continue; }
+      if (this.suspended.has(entry.key) || entry.uri !== uri || entry.text === text) { continue; }
       let edits = changes.map(change => ({ start: offsetAt(entry.text, change.range.start),
         deleteCount: offsetAt(entry.text, change.range.end) - offsetAt(entry.text, change.range.start), text: normalizedText(change.text) }));
       // Formatters and file reloads often report a whole-document replacement. Recover
@@ -193,7 +213,7 @@ export class EditTracking {
 
   locate(key: string, revision: string, text: string, persist = false): Location {
     const entry = this.live.get(key);
-    if (!entry || entry.revision !== revision) { return { kind: 'pending', reason: 'Pending document · Pull the paper source to receive this comment’s document version, or reconnect the comment manually.' }; }
+    if (this.suspended.has(key) || !entry || entry.revision !== revision) { return { kind: 'pending', reason: 'Pending document · Pull the paper source to receive this comment’s document version. If the editor has unsaved changes, save or reconcile them with the pulled file before reconnecting this comment.' }; }
     text = normalizedText(text);
     if (entry.text !== text) { this.advance(entry, text, diffEdits(entry.text, text)); }
     if (persist && JSON.stringify(this.saved.get(key)) !== JSON.stringify(copyState(entry))) { this.saved.set(key, copyState(entry)); this.generation++; }

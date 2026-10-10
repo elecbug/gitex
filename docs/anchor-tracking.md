@@ -1,6 +1,6 @@
 # GiTex Anchor Tracking
 
-This document describes GiTex 0.13.0. Active tracking follows editor edits from a known document version. It does not repeatedly search for a similar sentence or promote a fuzzy match into a new reference.
+This document describes GiTex 0.13.2. Active tracking follows editor edits from a known document version. It does not repeatedly search for a similar sentence or promote a fuzzy match into a new reference.
 
 ## 1. Selecting a target
 
@@ -63,11 +63,27 @@ A new reference includes `tracking: { version: 1, fragments, insertions? }`. Fra
 
 Receiving the snapshot as review metadata does not count as receiving the paper into the working copy. Before starting tracking for an unfamiliar reference, GiTex requires one of:
 
-1. A locally observed range for that reference, including a comment staged before opening its input box or starting its Git write.
+1. A locally observed range for that reference on the same or a descendant paper version, including a comment staged before opening its input box or starting its Git write.
 2. A current editor document with the exact snapshot hash.
-3. The snapshot's file content in the current paper branch's Git history, followed by exact edit replay to the working document.
+3. The snapshot's file content in the editor buffer's paper history, followed by exact edit replay to the working document.
+4. Every edit from the reference's base commit to its snapshot demonstrably present in the received paper, at the same base coordinates. This covers a draft commented on before the author finishes its eventual commit.
 
-The history check is limited to the reference's file path. Fetching a remote paper commit without advancing the current paper branch is insufficient. LF and CRLF Git blobs are supported.
+The history check is limited to the reference's file path and an immutable paper commit. Fetching a remote paper commit without advancing the current paper branch is insufficient. LF and CRLF Git blobs are supported. Draft receipt compares exact character edits, with an exact whole-line comparison for equivalent whitespace alignments. Additional surrounding edits are allowed when all original draft changes are retained. A matching passage somewhere else, a partial set of draft changes, or an unproven diff does not establish receipt. If the draft changes were substantially rewritten before any shared commit, manual reconnection may still be necessary.
+
+A dirty editor retains the paper version of its last clean buffer. Advancing HEAD or updating the file on disk does not imply that this unsaved buffer received those changes. GiTex checks that a clean buffer actually matches disk before updating that version. A dirty buffer already based on the received paper can still display comments through its later local edits. If its base cannot be established, new comments remain pending until the buffer is reconciled or the exact reference document is available.
+
+Locally tracked ranges record their paper lineage. Switching back to an older or divergent branch rechecks receipt, including for previously attached comments. Disk reloads freeze ranges until validation; pending references cannot advance, produce highlights, or be published as new anchors. Returning to the required paper version resumes tracking. Git HEAD/ref changes are watched separately from source files, including linked worktrees, so a branch update without a text change can release a pending comment. A refresh pins one paper commit per repository and retries if it changes during validation.
+
+Source changes are processed in document order before building a shared reference. Saving a comment takes its source text after asynchronous document preparation, preventing an intervening edit from rewinding the tracker or publishing an older buffer. Metadata updates with the same document and range geometry preserve live cut records and final Outdated state, unless a manual move establishes a new identity.
+
+| Arrival or editing order | Result |
+| --- | --- |
+| Reviews arrive first; paper is old or only fetched | Pending; no editor thread or shading. |
+| Paper arrives first; reviews arrive after further local edits | Attach through the received paper lineage and local edit ranges. |
+| A draft review arrives, then a commit containing that draft plus extra text | Attach when the complete draft changes are proved against their common base. |
+| Paper pull updates disk while an old dirty buffer stays open | Keep new-version comments pending; preserve unsaved text and prompt reconciliation. |
+| Switch to an older paper branch, then return | Recheck, hide incompatible comments, then resume when the version is available. |
+| Reply while pending | Save the reply without replacing the shared reference. |
 
 | State | Meaning | UI |
 | --- | --- | --- |
@@ -98,4 +114,4 @@ Resolved, pending, and outdated threads have no source shading. Theme colors are
 
 Insertion ranges are optional for compatibility with 0.12.0 references and local state. Old references retain their known fragment bounds; unknown historical gaps are not relabeled by guessing. Use 0.13.0 across collaborators to retain insertion provenance when saving updated references. The archive remains format 2 and the tracking data remains version 1.
 
-Tests cover exact and reversed selection, cursor fallback, blank rejection, Unicode offsets, boundary edits, fragment splitting, wrapped lines, cut containers, copy behavior, batch moves, undo/redo, persistence, staged saves, exact diff reconstruction, concurrent archives, delayed paper delivery, real native gutter input, pending UI, recovery after pulling the paper, bright shading in three themes, both highlight click targets, focus preservation, save-then-paste, multiple tabs, and Outdated after the final tab closes.
+Tests cover exact and reversed selection, cursor fallback, blank rejection, Unicode offsets, boundary edits, fragment splitting, wrapped lines, cut containers, copy behavior, batch moves, undo/redo, persistence, staged saves, exact diff reconstruction, concurrent archives, both paper/review arrival orders, drafts augmented before commit, fetch-only delivery, stale dirty buffers, branch rollback, HEAD-only updates, source edits during comment preparation, real native gutter input, pending UI, recovery after pulling the paper, bright shading in three themes, both highlight click targets, focus preservation, save-then-paste, multiple tabs, and Outdated after the final tab closes.
