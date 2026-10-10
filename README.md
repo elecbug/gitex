@@ -2,7 +2,7 @@
 
 English | [한국어](README.kr.md)
 
-A VS Code extension for sharing passage comments on LaTeX papers through Git. Use it alongside your existing editing, compilation, and PDF preview setup, including LaTeX Workshop.
+A VS Code extension for asynchronous Git review of LaTeX papers by one active paper author and multiple concurrent reviewers. Use it alongside your existing editing, compilation, and PDF preview setup, including LaTeX Workshop.
 
 ## Features
 
@@ -26,9 +26,20 @@ A VS Code extension for sharing passage comments on LaTeX papers through Git. Us
 
 Use VS Code's **Source Control** for paper commits, push/pull, and merges. **Sync Comments** automatically pulls, merges and pushes review data for your paper version. Reviewing an older commit does not require updating the paper. Review synchronization leaves your working files, current branch, and staging area unchanged.
 
+## Supported collaboration model
+
+**One participant edits the paper source at a time; multiple reviewers can comment and reply concurrently.** For example, the author pushes paper commit H1, reviewers B, C and D pull H1 and review in parallel, and GiTex automatically merges their independent review events. The author collects those reviews, revises the paper and creates H2 with an inherited review copy.
+
+Two coordination rules define this workflow:
+
+1. Hand over source authorship by committing and synchronizing the paper and reviews, then having the next author pull the agreed version. Reviewers do not need to take turns.
+2. Have reviewers share their H1 comments and the author collect them before H2's reviews are first published. Because a new local commit can trigger automatic review publication, collect H1 reviews before creating H2. H1 updates arriving after that publication remain on H1 and do not automatically enter H2.
+
+These are team coordination rules; GiTex does not lock the paper to an author or provide real-time shared source editing. A clean working tree is not required to comment. Reviews on unsaved or uncommitted source can remain **Pending document** for recipients who have not received that version. The intended scope is asynchronous review by an author, supervisors and coauthors; stability within this scope takes priority over additional document-concurrency algorithms. See the [supported collaboration model](docs/collaboration-model.md) for handoff, publication and pending-document details.
+
 ## Architecture and collaboration flow
 
-Each collaborator edits a local working copy in VS Code. A shared Git remote stores both the paper and its review history, with separate branches for each. The diagram shows User A writing the paper and User B reviewing it; both users can perform either role.
+Each collaborator maintains a local working copy in VS Code. A shared Git remote stores both the paper and its review history, with separate branches for each. The diagram shows User A writing the paper and User B reviewing it; either user can take the author role through the handoff described above.
 
 ![GiTex architecture: two VS Code users exchange LaTeX documents through the Main Branch and review comments through the GiTex Branch in a shared bare Git repository.](docs/images/architecture.png)
 
@@ -43,9 +54,9 @@ Green boxes (**Edited Data**) identify data edited by the depicted user. Blue bo
 The collaboration cycle in the diagram works as follows:
 
 1. **Write and share the paper.** User A edits the LaTeX document locally, commits it, and pushes the paper branch.
-2. **Review the shared text.** User B pulls the paper changes and adds a GiTex comment to the relevant passage, such as the typo on line 14.
+2. **Review the shared text.** User B and other reviewers pull the same paper commit and can add GiTex comments concurrently, such as a comment on the typo on line 14.
 3. **Share review events.** Saving the comment first records it locally. With automatic sync enabled, GiTex pulls remote reviews, merges them with local work and pushes the combined history to `gitex-comments` in the background.
-4. **Revise and repeat.** User A uses **Fetch Comments** to receive shared reviews in Explorer's **GiTex Comments** view, checks the anchored passages, and revises the paper. Replies, edits, and resolved states remain in review history while paper revisions continue through the regular branch.
+4. **Revise and repeat.** Once reviewers have shared the round's feedback, User A uses **Sync Comments** to collect it and share local responses before creating the next paper commit. Replies, edits, and resolved states remain in review history while paper revisions continue through the regular branch.
 
 The diagram's **“Sync comments on refresh”** means that a user explicitly refreshes shared reviews from the **GiTex Comments** view in Explorer. Its **Sync Comments** toolbar button pulls, merges and publishes review events automatically. The separate **Refresh Comments** button reloads local data; **Fetch Comments** is also available as a command to receive remote reviews without publishing.
 
@@ -57,7 +68,7 @@ Local saves continue while a sync waits for the remote or snapshot approval. Syn
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.15.2.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.15.3.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -105,7 +116,7 @@ The review panel follows VS Code's light, dark, and high-contrast themes and ada
 
 Each comment shows its author, timestamp, and edited marker. Edit history and tracking history open on demand, with the newest entries first and the current version marked. On wider panels, manual moves show the previous and new references side by side. Switching threads preserves drafts, expanded sections, and scroll position while the tab stays open.
 
-**Discussion** also shows manual location moves alongside comments and replies in recorded event order. Each **Location moved** entry is read only and shows who moved the thread, when, and its previous and new file/line ranges. Expand **Moved passages** to inspect the saved text. Automatic tracking updates remain in Tracking history.
+Starting in **0.15.3**, **Discussion** also shows manual location moves alongside comments and replies in recorded event order. Each **Location moved** entry is read only and shows who moved the thread, when, and its previous and new file/line ranges. Expand **Moved passages** to inspect the saved text. Automatic tracking updates remain in Tracking history.
 
 Use **Ctrl+Enter** (**Cmd+Enter** on macOS) inside a reply or edit field to save, or use its save button. Empty replies are disabled; **Saving…** prevents duplicate submissions while the local save is pending. The sync indicator distinguishes automatic sync on save, manual sync, and sync failures. Expand it for details. Opening or expanding these controls does not access the remote.
 
@@ -238,7 +249,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.15.2.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.15.3.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

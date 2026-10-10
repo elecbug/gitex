@@ -4,6 +4,14 @@ GiTex 0.15.2 attaches a review view to a **paper commit hash**. The current chec
 
 `paperCommit` is the repository commit ID. `documentHash` is a separate SHA-256 hash of the LF-normalized annotated file, used to verify exact range coordinates. Identical file contents in different commits do not implicitly combine their discussions.
 
+## Supported collaboration workflow
+
+The supported workflow has one active source author and multiple concurrent reviewers. Reviewers share the same paper commit and independently sync comments and replies. The author collects those reviews before creating the next paper version. Source authorship can be handed over after committing and synchronizing; GiTex does not enforce an author lock.
+
+Finish sharing and collecting the previous version's intended reviews before the next version's **first review publication**. This refers to the metadata push, not the paper push. Since `gitex.autoSyncOnCommit` can publish after a new local commit, the simple operating rule is to collect H1 feedback before creating H2. No fetch can collect another reviewer's unpublished local work, so closing a review round requires participant coordination. Late ancestor updates remain visible without reopening published inheritance.
+
+Comments on unsaved or uncommitted source remain supported without a clean-commit requirement; recipients may wait in **Pending document** until the referenced version is available. The complete scope and handoff procedure are in [Supported collaboration model](collaboration-model.md).
+
 ## Display authority and copies
 
 A checkpoint contains the paper hash, an explicit set of immutable review events, their fingerprint, selected comment revisions, resolution state and tracking outcome. An attached checkpoint also contains the reference and its fragment/insertion offsets. Replaying only the selected events reconstructs that version's discussion. Concurrent records **within one paper version** union their events; records from other paper commits remain in history.

@@ -2,6 +2,14 @@
 
 GiTex 0.15.2 retains the commit-scoped review model and archive format 4. This review concentrates on ownership and concurrency: a local save, a received archive and an approved publication have different completion boundaries.
 
+## Product collaboration boundary
+
+GiTex supports asynchronous review with one active source author and multiple concurrent reviewers. Participants serialize paper editing and hand off authorship through Git commits and synchronization, while independent comments and replies can be written in parallel. This is a workflow agreement, not a source-editing lock.
+
+Participants collect the previous paper version's reviews before the next version's first review publication freezes inheritance. No clean-commit rule is introduced: uncommitted-source comments may remain pending for recipients who lack the referenced document version. The [supported collaboration model](collaboration-model.md) describes the review round and distinguishes metadata publication from source push.
+
+Stabilizing this bounded workflow takes priority over introducing real-time document editing or global coordination protocols. Existing merge-commit handling and immutable-event merging remain useful mechanisms within that scope.
+
 ## State ownership
 
 | Owner | Authority | Lifetime |
