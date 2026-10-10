@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { Git } from '../../src/git';
-import { ReviewStore } from '../../src/store';
+import { ReviewStore } from '../reviewStore';
 import { createAnchor } from '../../src/anchor';
+import { approveSnapshotSharing } from './snapshotPrivacy';
 import { findRepository } from '../../src/repositories';
 
 export async function repositoryTests(app: any, existing: ReviewStore): Promise<void> {
@@ -114,7 +115,7 @@ export async function repositoryTests(app: any, existing: ReviewStore): Promise<
   await app.addComment('A new comment saved only in second');
   await Promise.all([...app.syncs.values()]);
   assert.deepEqual(calls, [`sync:${second}`]);
-  await app.pull(); await app.sync();
+  await app.pull(); await approveSnapshotSharing(app, app.repositories.get(second));
   assert.deepEqual(calls, [`sync:${second}`, `pull:${second}`, `sync:${second}`]);
   assert.equal((await b.store.threads()).length, 2);
   assert.equal(await a.store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']), '');
@@ -131,12 +132,14 @@ export async function repositoryTests(app: any, existing: ReviewStore): Promise<
   await select(path.join(first, 'main.tex'));
   const inlineThread = app.nativeThreads.get(aKey);
   await select(path.join(second, 'main.tex'));
-  await vscode.commands.executeCommand('gitex.syncThread', { thread: inlineThread, text: '' });
-  const deadline = Date.now() + 15_000;
-  while (!(await a.store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']))) {
-    assert.ok(Date.now() < deadline, 'inline sync must finish for its original repository');
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
+  await approveSnapshotSharing(app, app.repositories.get(first), false, async () => {
+    await vscode.commands.executeCommand('gitex.syncThread', { thread: inlineThread, text: '' });
+    const deadline = Date.now() + 15_000;
+    while (!(await a.store.git.text(['ls-remote', '--heads', 'origin', 'refs/heads/gitex-comments']))) {
+      assert.ok(Date.now() < deadline, 'inline sync must finish for its original repository');
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  });
   assert.equal(calls.at(-1), `sync:${first}`, 'inline sync uses its thread repository, even after selecting another paper');
   assertScope(second);
 

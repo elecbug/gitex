@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { chromium } from 'playwright-core';
-import { ReviewStore } from '../../src/store';
+import { ReviewStore } from '../reviewStore';
 
 async function until(check: () => Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 15_000;
@@ -36,7 +36,7 @@ export async function inlineSyncTests(app: any, store: ReviewStore): Promise<voi
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   let started = 0;
-  repository.store.sync = async (remote: string) => { started++; await barrier; return realSync(remote); };
+  repository.store.sync = async (...args: Parameters<ReviewStore['sync']>) => { started++; await barrier; return realSync(...args); };
   try {
     const page = browser.contexts()[0].pages().find(page => page.url().startsWith('vscode-file:'))!;
     assert.ok(page, 'VS Code workbench must be available');
@@ -75,7 +75,7 @@ export async function inlineSyncTests(app: any, store: ReviewStore): Promise<voi
     assert.ok(!(await store.threads())[0].comments.some(comment => comment.body === draft || comment.body === 'An unsent inline reply'));
     assert.deepEqual({ head: await store.head(), index: await store.git.text(['write-tree']), text: source.getText() }, before);
     await input.press('Control+A'); await input.press('Backspace');
-    console.log('GiTex inline Sync: button placement, pull + push, disabled auto sync, unsent drafts and paper preservation passed.');
+    console.log('GiTex inline Sync: button placement, automatic pull and merge before push, disabled auto sync, unsent drafts and paper preservation passed.');
   } finally {
     release(); repository.store.sync = realSync;
     await config.update('autoSyncOnSave', previous, vscode.ConfigurationTarget.WorkspaceFolder);

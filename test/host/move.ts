@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { writeFile, readFile } from 'node:fs/promises';
 import { chromium, Frame } from 'playwright-core';
 import { Git } from '../../src/git';
-import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../../src/store';
+import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../reviewStore';
 
 async function until(check: () => Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 15000;
@@ -65,7 +65,7 @@ export async function moveTests(app: any, store: ReviewStore): Promise<void> {
   const repository = item().repository;
   const realSync = repository.store.sync.bind(repository.store);
   let syncs = 0;
-  repository.store.sync = async (remote: string) => { syncs++; return realSync(remote); };
+  repository.store.sync = async (...args: Parameters<ReviewStore['sync']>) => { syncs++; return realSync(...args); };
   await config.update('autoSyncOnSave', true, vscode.ConfigurationTarget.WorkspaceFolder);
   editor = await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
   editor.selection = new vscode.Selection(1, 0, 3, 0);

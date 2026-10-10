@@ -1,16 +1,19 @@
-import { diffEdits, normalizedText } from './editTracking';
+import { diffEdits, reverseDiffEdits, normalizedText } from './editTracking';
 
-/** Prove that an unpublished snapshot's edits reached a later paper version.
+/** Check that a draft's changes occur at stable base coordinates in a later paper version.
  * Coordinates are relative to the same committed base, never a fuzzy passage match.
  */
 export function snapshotChangesPresent(base: string, snapshot: string, paper: string): boolean {
   base = normalizedText(base); snapshot = normalizedText(snapshot); paper = normalizedText(paper);
   const containsEdits = (before: string, draft: string, current: string, wholeLines = false): boolean => {
-    const expected = diffEdits(before, draft), received = diffEdits(before, current);
-    if (!expected.length || expected.some(edit => edit.opaque) || received.some(edit => edit.opaque)) { return false; }
-    return expected.every(edit => received.some(candidate => candidate.start === edit.start &&
+    const expected = [diffEdits(before, draft), reverseDiffEdits(before, draft)];
+    const received = [diffEdits(before, current), reverseDiffEdits(before, current)];
+    if (expected.some(script => !script.length) || [...expected, ...received].some(script => script.some(edit => edit.opaque))) { return false; }
+    // Both possible alignments must agree on receipt. A one-sided diff cannot
+    // establish which repeated occurrence was changed.
+    return expected.every(script => received.every(actual => script.every(edit => actual.some(candidate => candidate.start === edit.start &&
       candidate.deleteCount === edit.deleteCount && (edit.text ?
-        wholeLines ? candidate.text.includes(edit.text) : candidate.text.startsWith(edit.text) : !candidate.text)));
+        wholeLines ? candidate.text.includes(edit.text) : candidate.text.startsWith(edit.text) : !candidate.text)))));
   };
   if (containsEdits(base, snapshot, paper)) { return true; }
   // Character diffs can place an identical inserted space on either side of a

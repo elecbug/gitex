@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { chromium, Frame } from 'playwright-core';
-import { ReviewStore } from '../../src/store';
+import { ReviewStore } from '../reviewStore';
 import { createSelectionAnchor } from '../../src/anchor';
 import { EditTracking, enableEditTracking } from '../../src/editTracking';
 
@@ -130,7 +130,7 @@ export async function editTrackingTests(app: any, store: ReviewStore): Promise<v
     const futureAnchor = enableEditTracking(createSelectionAnchor('pending-document.tex', futureText,
       { start: { line: 0, character: 0 }, end: { line: 0, character: futureText.trimEnd().length } }, await peer.head()), futureText);
     const pendingId = await peer.create(futureAnchor, 'Review ahead of the paper', futureText);
-    await peer.sync(); await store.pull();
+    await peer.pull(); await peer.sync(); await store.pull();
     const pendingDoc = await vscode.workspace.openTextDocument(pendingFile);
     await vscode.window.showTextDocument(pendingDoc, { viewColumn: vscode.ViewColumn.One, preview: false });
     await app.refresh();
@@ -141,7 +141,7 @@ export async function editTrackingTests(app: any, store: ReviewStore): Promise<v
     await app.reviewThread(pendingItem());
     await until(async () => (await frame!.locator('#match-state').textContent()) === 'Pending document', 'pending badge');
     assert.match((await frame!.locator('.context-note').textContent())!, /Pull the paper source/);
-    await app.panelAction(pendingItem(), { type: 'reply', body: 'Waiting for the paper', requestId: 'pending-reply' });
+    await assert.rejects(app.panelAction(pendingItem(), { type: 'reply', body: 'Waiting for the paper', requestId: 'pending-reply' }), /another paper commit/);
     assert.deepEqual((await store.threads()).find(thread => thread.id === pendingId)!.anchor, futureAnchor);
     await store.git.text(['fetch', 'origin', 'main']); await app.refresh();
     assert.equal(pendingItem().location.kind, 'pending', 'fetching commits without updating the paper does not reveal the comment');

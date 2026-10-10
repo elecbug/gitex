@@ -1,28 +1,69 @@
+import { isDeepStrictEqual } from 'node:util';
+import { archiveFiles, archiveEvents } from './archive';
 import { createHash, randomUUID } from 'node:crypto';
 import { Anchor, documentHash } from './anchor';
 import { Git, GitError } from './git';
-import { Author, materialize, parseEvent, ReviewEvent, ReviewThread } from './model';
+import { Author, sameAuthor, materialize, reviewAtCommit, PaperReviewState, parseEvent, ReviewEvent, ReviewThread } from './model';
 import { snapshotChangesPresent } from './documentSync';
+import { EditTracking } from './editTracking';
+import { inspectPublication, PublicationGuard } from './snapshotPrivacy';
+import { ReviewTransport, ReviewEndpoint } from './reviewTransport';
+export { REMOTE_REF } from './reviewTransport';
 
 export const LOCAL_REF = 'refs/gitex/comments';
-export const REMOTE_REF = 'refs/heads/gitex-comments';
 const legacyMarker = JSON.stringify({ format: 'gitex-comments', version: 1 });
 const marker = JSON.stringify({ format: 'gitex-comments', version: 2 });
-type Entry = { event: ReviewEvent; oid: string };
-class Entries extends Map<string, Entry> { documents = new Map<string, string>(); }
+const commentMarker = JSON.stringify({ format: 'gitex-comments', version: 4 });
+const checkpointMarker = JSON.stringify({ format: 'gitex-comments', version: 3 });
+export type CommitHints = Map<string, { basedOn: string; anchor: Anchor }>;
+export interface SyncResult {
+  threads: ReviewThread[];
+  publishedTip: string | null;
+  localTip: string | null;
+}
+type Entry = { event: ReviewEvent };
+interface PaperPublication { version: 1; id: string; paperCommit: string; threads: string[] }
+class Entries extends Map<string, Entry> {
+  documents = new Map<string, string>();
+  publications = new Map<string, PaperPublication>();
+}
+function validatePublications(entries: Entries): void {
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+  const checkpoints = new Set([...entries.values()].flatMap(({ event }) => event.type === 'checkpoint' ? [`${event.paperCommit}:${event.threadId}`] : []));
+  for (const [id, publication] of entries.publications) {
+    if (!publication || publication.version !== 1 || publication.id !== id || !uuid.test(id) || entries.has(id) ||
+        typeof publication.paperCommit !== 'string' || !/^[a-f0-9]{40}([a-f0-9]{24})?$/.test(publication.paperCommit) ||
+        !Array.isArray(publication.threads) || new Set(publication.threads).size !== publication.threads.length ||
+        publication.threads.some(thread => typeof thread !== 'string' || !uuid.test(thread) || !checkpoints.has(`${publication.paperCommit}:${thread}`))) {
+      throw new Error('Invalid GiTex paper publication.');
+    }
+  }
+}
 type Payload = { type: 'create'; anchor: Anchor; body: string } | { type: 'reply'; body: string; anchor?: Anchor; anchorBasedOn?: string } |
-  { type: 'edit'; commentId: string; basedOn: string; body: string; anchor?: Anchor; anchorBasedOn?: string } |
+  { type: 'edit'; commentId: string; basedOn: string; body: string; merges?: string[]; anchor?: Anchor; anchorBasedOn?: string } |
   { type: 'move'; anchor: Anchor; basedOn: string } | { type: 'state'; resolved: boolean };
 
 export class ReviewStore {
   readonly git: Git;
   private pending: Promise<unknown> = Promise.resolve();
+  private networkPending: Promise<unknown> = Promise.resolve();
+  private readonly transport: ReviewTransport;
+  private readonly blobOids = new Map<string, string>();
+  private cachedArchive?: { tip: string; entries: Entries };
+  private cachedThreads?: { tip: string | null; threads: ReviewThread[] };
 
-  constructor(readonly root: string) { this.git = new Git(root); }
+  constructor(readonly root: string) { this.git = new Git(root); this.transport = new ReviewTransport(this.git); }
 
   private exclusive<T>(action: () => Promise<T>): Promise<T> {
     const next = this.pending.then(action, action);
     this.pending = next.catch(() => undefined);
+    return next;
+  }
+
+  /** A slow remote or approval dialog never owns the local writer queue. */
+  private network<T>(action: () => Promise<T>): Promise<T> {
+    const next = this.networkPending.then(action, action);
+    this.networkPending = next.catch(() => undefined);
     return next;
   }
 
@@ -34,7 +75,11 @@ export class ReviewStore {
   }
 
   async threads(): Promise<ReviewThread[]> {
-    return materialize([...await this.read(await this.git.ref(LOCAL_REF))].map(([, entry]) => entry.event));
+    const tip = await this.git.ref(LOCAL_REF);
+    if (this.cachedThreads?.tip === tip) { return structuredClone(this.cachedThreads.threads); }
+    const threads = materialize([...await this.read(tip)].map(([, entry]) => entry.event));
+    this.cachedThreads = { tip, threads };
+    return structuredClone(threads);
   }
 
   async head(): Promise<string | null> { return this.git.ref('HEAD'); }
@@ -77,19 +122,185 @@ export class ReviewStore {
     return false;
   }
 
-  create(anchor: Anchor, body: string, document?: string): Promise<string> {
-    return this.append(undefined, { type: 'create', anchor, body: body.trim() }, document);
+  create(anchor: Anchor, body: string, document?: string, paperCommit?: string | null): Promise<string> {
+    return this.append(undefined, { type: 'create', anchor, body: body.trim() }, document, paperCommit);
   }
-  reply(threadId: string, body: string, anchor?: Anchor, anchorBasedOn?: string, document?: string): Promise<string> { return this.append(threadId, { type: 'reply', body: body.trim(), anchor, anchorBasedOn }, document); }
-  edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor, anchorBasedOn?: string, document?: string): Promise<string> {
-    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor, anchorBasedOn }, document);
+  reply(threadId: string, body: string, anchor?: Anchor, anchorBasedOn?: string, document?: string, paperCommit?: string | null): Promise<string> {
+    return this.append(threadId, { type: 'reply', body: body.trim(), anchor, anchorBasedOn }, document, paperCommit);
   }
-  move(threadId: string, anchor: Anchor, basedOn: string, document?: string): Promise<string> { return this.append(threadId, { type: 'move', anchor, basedOn }, document); }
-  setResolved(threadId: string, resolved: boolean): Promise<string> { return this.append(threadId, { type: 'state', resolved }); }
+  edit(threadId: string, commentId: string, body: string, basedOn: string, anchor?: Anchor, anchorBasedOn?: string, document?: string, paperCommit?: string | null, acknowledgedRevisions?: string[]): Promise<string> {
+    return this.append(threadId, { type: 'edit', commentId, basedOn, body: body.trim(), anchor, anchorBasedOn, merges: acknowledgedRevisions }, document, paperCommit);
+  }
+  move(threadId: string, anchor: Anchor, basedOn: string, document?: string, paperCommit?: string | null): Promise<string> {
+    return this.append(threadId, { type: 'move', anchor, basedOn }, document, paperCommit);
+  }
+  setResolved(threadId: string, resolved: boolean, paperCommit?: string | null): Promise<string> {
+    return this.append(threadId, { type: 'state', resolved }, undefined, paperCommit);
+  }
 
-  private append(threadId: string | undefined, payload: Payload, document?: string): Promise<string> {
+  /** Follow every parent, stopping at the nearest recorded view on each path. */
+  private async inheritedReview(review: ReviewThread, commit: string, graph?: Map<string, string[]>, parentsOnly = false, closedVersions = new Set<string>()): Promise<ReviewThread | undefined> {
+    const current = !parentsOnly && reviewAtCommit(review, commit);
+    if (current) { return current; }
+    graph ??= await this.paperGraph(commit);
+    const pending = [...(graph.get(commit) ?? [])], visited = new Set<string>(), views: ReviewThread[] = [];
+    while (pending.length) {
+      const hash = pending.pop()!;
+      if (visited.has(hash)) { continue; } visited.add(hash);
+      const inherited = reviewAtCommit(review, hash);
+      if (inherited) { views.push(inherited); }
+      else if (!closedVersions.has(hash)) { pending.push(...(graph.get(hash) ?? [])); }
+    }
+    if (views.length) { return this.unionReviews(review, views); }
+    if (review.paperHistory.length) { return undefined; }
+    if (!review.anchor.baseCommit || graph.has(review.anchor.baseCommit)) { return review; }
+    return undefined;
+  }
+
+  private unionReviews(global: ReviewThread, views: ReviewThread[]): ReviewThread {
+    const ids = new Set(views.flatMap(view => view.events.map(event => event.id)));
+    const combined = materialize(global.events.filter(event => ids.has(event.id)))[0];
+    const records = views.flatMap(view => view.paperRecord ? [view.paperRecord] : []).sort((a, b) => b.clock - a.clock || b.id.localeCompare(a.id, 'en'));
+    const record = records.find(record => record.basedOn === combined.anchorRevision);
+    return { ...combined, paperHistory: global.paperHistory, paperRecord: record, archivedComments: global.comments };
+  }
+
+  private async paperGraph(commit: string): Promise<Map<string, string[]>> {
+    return new Map((await this.git.text(['rev-list', '--parents', commit])).split('\n').filter(Boolean).map(line => {
+      const [hash, ...parents] = line.split(' '); return [hash, parents];
+    }));
+  }
+
+  /** Read-only disclosure of ancestor updates excluded from this commit's published view. */
+  async earlierReviewUpdates(commit: string, reviews?: ReviewThread[]): Promise<Map<string, { commits: string[]; count: number }>> {
+    const ancestors = await this.paperGraph(commit);
+    const notices = new Map<string, { commits: string[]; count: number }>();
+    for (const global of reviews ?? await this.threads()) {
+      const current = reviewAtCommit(global, commit);
+      const included = new Set(current?.events.map(event => event.id));
+      const missing = global.events.filter(event => event.type !== 'checkpoint' && event.paperCommit && event.paperCommit !== commit &&
+        ancestors.has(event.paperCommit) && !included.has(event.id));
+      if (missing.length) { notices.set(global.id, { commits: [...new Set(missing.map(event => event.paperCommit!))], count: missing.length }); }
+    }
+    return notices;
+  }
+
+  private state(review: ReviewThread, commit: string, source: PaperReviewState['source']): PaperReviewState {
+    return { paperCommit: commit, source, eventIds: review.events.map(event => event.id),
+      reviewVersion: review.reviewVersion, basedOn: review.anchorRevision,
+      status: 'pending', reason: 'This paper commit does not contain the required document version.',
+      comments: review.comments.map(comment => ({ id: comment.id, revision: comment.revisions.at(-1)!.id })), resolved: review.resolved };
+  }
+
+  private async addCheckpoint(entries: Entries, threadId: string, state: PaperReviewState, author: Author): Promise<void> {
+    const id = randomUUID(), clock = Math.max(0, ...[...entries.values()].map(entry => entry.event.clock)) + 1;
+    const event = parseEvent(JSON.stringify({ version: 1, type: 'checkpoint', id, threadId, clock, at: new Date().toISOString(), author, ...state }));
+    entries.set(id, { event });
+  }
+
+  async paperCommitsSince(previous: string | null | undefined, head: string): Promise<string[]> {
+    if (previous && previous !== head && await this.isAncestor(previous, head)) {
+      return (await this.git.text(['rev-list', '--first-parent', '--reverse', `${previous}..${head}`])).split('\n').filter(Boolean);
+    }
+    return [head];
+  }
+
+  /** One metadata transaction records every thread against an immutable paper commit. */
+  recordPaperCommit(commit: string, hints: CommitHints = new Map()): Promise<ReviewThread[]> {
+    return this.exclusive(() => this.checkpoint(commit, hints));
+  }
+
+  private async checkpoint(commit: string, hints: CommitHints = new Map(), finalize = false, published = new Set<string>()): Promise<ReviewThread[]> {
+    if (!/^[a-f0-9]{40}([a-f0-9]{24})?$/.test(commit) || await this.git.ref(`${commit}^{commit}`) !== commit) {
+      throw new Error('Cannot record reviews without a valid paper commit.');
+    }
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const old = await this.git.ref(LOCAL_REF), entries = await this.read(old);
+      const reviews = materialize([...entries.values()].map(entry => entry.event));
+      const publications = [...entries.publications.values()].filter(record => record.paperCommit === commit && (!finalize || published.has(record.id)));
+      const inheritedThreads = publications.length ? new Set(publications.flatMap(record => record.threads)) : undefined;
+      const missing = reviews.filter(review => {
+        const records = review.paperHistory.filter(record => record.paperCommit === commit);
+        return !records.length ? !inheritedThreads || inheritedThreads.has(review.id) : finalize && !records.some(record => !record.provisional && published.has(record.id));
+      });
+      if (!missing.length && (!finalize || publications.length)) { return reviews; }
+      const author = await this.author();
+      let added = false;
+      const ancestry = await this.paperGraph(commit);
+      const closedVersions = new Set([...entries.publications.values()].map(record => record.paperCommit));
+      const documents = new Map<string, Promise<string | undefined>>();
+      const sources = new Map<string, Promise<string | undefined>>();
+      const proofs = new Map<string, Promise<boolean>>();
+      for (const global of missing) {
+        let review = await this.inheritedReview(global, commit, ancestry, false, closedVersions);
+        if (!review) { continue; }
+        const current = reviewAtCommit(global, commit);
+        if (finalize && current) {
+          const inherited = await this.inheritedReview(global, commit, ancestry, true, closedVersions);
+          if (inherited) { review = this.unionReviews(global, [inherited, current]); }
+          // Preserve this commit's editor-derived geometry when only discussion changed.
+          if (current.paperRecord?.basedOn === review.anchorRevision) { review.paperRecord = current.paperRecord; }
+        }
+        const path = review.anchor.path;
+        if (!documents.has(path)) { documents.set(path, this.git.run(['show', `${commit}:${path}`]).then(result => result.code === 0 ? result.stdout.toString('utf8').replace(/\r\n/g, '\n') : undefined)); }
+        const text = await documents.get(path)!;
+        const state = this.state(review, commit, 'commit');
+        state.provisional = !finalize;
+        if (text === undefined) { state.status = 'outdated'; state.reason = 'The referenced file is absent from this paper commit.'; }
+        else {
+          const tracker = new EditTracking();
+          const hint = hints.get(review.id);
+          let seeded = !!hint && hint.basedOn === review.anchorRevision && hint.anchor.baseCommit === commit &&
+            hint.anchor.path === path && tracker.seed(review.id, review.anchorRevision, path, hint.anchor, text);
+          if (!seeded && (review.paperRecord?.status === 'outdated' || review.paperRecord?.status === 'uncertain')) {
+            state.status = review.paperRecord.status; state.reason = review.paperRecord.reason;
+          } else if (!seeded) {
+            const savedAnchor = review.paperRecord?.anchor && review.paperRecord.basedOn === review.anchorRevision ? review.paperRecord.anchor : review.anchor;
+            const sourceKey = `${path}:${savedAnchor.documentHash}`;
+            if (!sources.has(sourceKey)) { sources.set(sourceKey, this.documentText(savedAnchor)); }
+            const source = documentHash(text) === savedAnchor.documentHash ? text : await sources.get(sourceKey)!;
+            if (source !== undefined) {
+              const proofKey = `${sourceKey}:${savedAnchor.baseCommit}`;
+              if (!proofs.has(proofKey)) { proofs.set(proofKey, documentHash(text) === savedAnchor.documentHash ? Promise.resolve(true) : this.documentAvailable(savedAnchor, source, commit)); }
+              if (await proofs.get(proofKey)) { seeded = tracker.seed(review.id, review.anchorRevision, path, savedAnchor, source); }
+            }
+          }
+          if (seeded) {
+            const anchor = tracker.reference(review.id, review.anchorRevision, review.anchor, text, commit);
+            if (anchor) {
+              state.status = 'attached'; state.anchor = anchor; delete state.reason;
+              if (!entries.documents.has(anchor.documentHash)) {
+                entries.documents.set(anchor.documentHash, await this.git.text(['hash-object', '-w', '--stdin'], text));
+              }
+            } else {
+              const location = tracker.locate(review.id, review.anchorRevision, text);
+              state.status = location.kind === 'uncertain' && location.evidence === 'reconstructed' ? 'uncertain' : 'outdated';
+              state.reason = state.status === 'uncertain' && location.kind === 'uncertain' ? location.reason : 'The reviewed target has no surviving fragment in this committed document.';
+              if (location.kind === 'uncertain') { state.estimatedLine = location.estimatedLine; }
+            }
+          }
+        }
+        await this.addCheckpoint(entries, review.id, state, author);
+        added = true;
+      }
+      if (finalize && !publications.length) {
+        const id = randomUUID();
+        const threads = new Set([...entries.values()].flatMap(({ event }) => event.type === 'checkpoint' && event.paperCommit === commit ? [event.threadId] : []));
+        entries.publications.set(id, { version: 1, id, paperCommit: commit, threads: [...threads].sort() });
+        added = true;
+      }
+      if (!added) { return reviews; }
+      const result = materialize([...entries.values()].map(entry => entry.event));
+      const next = await this.commit(entries, old ? [old] : []);
+      if (await this.advance(next, old)) { return result; }
+    }
+    throw new Error('Reviews changed while recording the paper commit. The commit record will be retried.');
+  }
+
+  private append(threadId: string | undefined, payload: Payload, document?: string, paperCommit?: string | null): Promise<string> {
     return this.exclusive(async () => {
       const id = randomUUID();
+      paperCommit = paperCommit === undefined ? await this.head() : paperCommit;
       const author = await this.author();
       for (let attempt = 0; attempt < 8; attempt++) {
         const old = await this.git.ref(LOCAL_REF);
@@ -104,7 +315,16 @@ export class ReviewStore {
           if (!entries.documents.has(payload.anchor.documentHash)) { throw new Error('The comment document snapshot is missing.'); }
         }
         if (threadId && !entries.has(threadId)) { throw new Error('The comment thread no longer exists locally. Refresh or sync comments.'); }
-        const thread = threadId ? materialize([...entries.values()].map(entry => entry.event)).find(thread => thread.id === threadId) : undefined;
+        const global = threadId ? materialize([...entries.values()].map(entry => entry.event)).find(thread => thread.id === threadId) : undefined;
+        let thread = global && paperCommit ? await this.inheritedReview(global, paperCommit, undefined, false, new Set([...entries.publications.values()].map(record => record.paperCommit))) : global;
+        // An explicit move can reconnect a review after amend/rebase. Mere text equality cannot.
+        if (!thread && global && payload.type === 'move') {
+          thread = reviewAtCommit(global, global.paperHistory.at(-1)?.paperCommit ?? null) ?? global;
+        }
+        const publishedViews = [...entries.publications.values()].filter(record => record.paperCommit === paperCommit);
+        if (global && payload.type !== 'move' && paperCommit && !reviewAtCommit(global, paperCommit) && publishedViews.length &&
+            !publishedViews.some(record => record.threads.includes(global.id))) { thread = undefined; }
+        if (global && !thread) { throw new Error('This review belongs to another paper commit. Pull or switch the paper before editing it.'); }
         if (payload.type === 'move' && payload.basedOn !== thread!.anchorRevision) {
           throw new Error('This comment location changed while you were choosing a destination. Refresh and move it again.');
         }
@@ -114,19 +334,38 @@ export class ReviewStore {
           anchorBasedOn = payload.anchorBasedOn ?? thread!.anchorRevision;
           if (anchorBasedOn !== thread!.anchorRevision) { throw new Error('The comment location changed while you were editing. Your draft is preserved. Refresh before saving.'); }
         }
+        let merges: string[] | undefined;
         if (payload.type === 'edit') {
           const comment = thread?.comments.find(comment => comment.id === payload.commentId);
           if (!comment) { throw new Error('The comment to edit does not exist in this thread.'); }
+          if (!sameAuthor(author, comment.author)) { throw new Error('Only the original author can edit this comment. Reply with your own comment instead.'); }
+          merges = comment.conflictingRevisions.length ? comment.conflictingRevisions : undefined;
+          if (merges && (merges.length !== payload.merges?.length || merges.some(id => !payload.merges!.includes(id)))) {
+            throw new Error('Concurrent edits changed. Review History, then cancel and edit again to resolve the current versions. Your draft is preserved.');
+          }
           if (comment.revisions.at(-1)!.id !== payload.basedOn) {
             throw new Error('This comment changed while you were editing. Your draft is preserved. Review the history, then cancel and edit the latest version.');
           }
-          if (comment.body === payload.body && (!payload.anchor || JSON.stringify(payload.anchor) === JSON.stringify(thread!.anchor))) { return threadId!; }
+          if (!merges && comment.body === payload.body && (!payload.anchor || JSON.stringify(payload.anchor) === JSON.stringify(thread!.anchor))) { return threadId!; }
         }
         const clock = Math.max(0, ...[...entries.values()].map(entry => entry.event.clock)) + 1;
         const event = parseEvent(JSON.stringify({ version: 1, id, threadId: threadId ?? id, clock, at: new Date().toISOString(), author, ...payload,
-          ...(anchorBasedOn ? { anchorBasedOn } : {}) }));
-        const oid = await this.git.text(['hash-object', '-w', '--stdin'], JSON.stringify(event));
-        entries.set(id, { event, oid });
+          ...(payload.type === 'edit' ? { authorOnly: true, ...(merges ? { merges } : {}) } : {}),
+          ...(anchorBasedOn ? { anchorBasedOn } : {}), ...(paperCommit ? { paperCommit } : {}) }));
+        entries.set(id, { event });
+        if (paperCommit) {
+          const updated = materialize([...(thread?.events ?? []), event])[0];
+          const state = this.state(updated, paperCommit, 'working-copy');
+          state.provisional = !!global && !global.paperHistory.some(record => record.paperCommit === paperCommit && !record.provisional);
+          const changedAnchor = 'anchor' in payload && payload.anchor;
+          if (changedAnchor || !thread?.paperRecord || thread.paperRecord.status === 'attached') {
+            state.status = 'attached'; state.anchor = changedAnchor || thread?.paperRecord?.anchor || updated.anchor; delete state.reason;
+          } else {
+            state.status = thread.paperRecord.status; state.reason = thread.paperRecord.reason;
+            state.estimatedLine = thread.paperRecord.estimatedLine;
+          }
+          await this.addCheckpoint(entries, updated.id, state, author);
+        }
         materialize([...entries.values()].map(entry => entry.event));
         const commit = await this.commit(entries, old ? [old] : []);
         if (await this.advance(commit, old)) { return threadId ?? id; }
@@ -136,67 +375,91 @@ export class ReviewStore {
   }
 
   pull(remote = 'origin'): Promise<ReviewThread[]> {
-    return this.exclusive(async () => {
-      await this.receive(remote);
+    return this.network(async () => {
+      const endpoint = await this.transport.endpoint(remote, 'fetch');
+      await this.receive(endpoint);
       return this.threads();
     });
   }
 
-  sync(remote = 'origin'): Promise<ReviewThread[]> {
-    return this.exclusive(async () => {
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const remoteTip = await this.receive(remote);
-        const publishTip = await this.git.ref(LOCAL_REF);
-        if (!publishTip || publishTip === remoteTip) { return this.threads(); }
-        // Publish the exact snapshot we validated. A later local edit stays queued for the next sync.
-        const pushed = await this.git.run(['push', '--porcelain', remote, `${publishTip}:${REMOTE_REF}`]);
-        if (pushed.code === 0) { return this.threads(); }
+  sync(remote = 'origin', paperCommit?: string, beforePush?: PublicationGuard): Promise<SyncResult> {
+    return this.network(async () => {
+      if (!beforePush) { throw new Error('A publication policy is required before GiTex can push comments.'); }
+      // Resolve once: fetch, inspection, approval and every push retry use this destination.
+      const endpoint = await this.transport.endpoint(remote, 'push');
+      const head = paperCommit ?? await this.head();
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const remoteTip = await this.receive(endpoint);
+        const publishTip = await this.exclusive(async () => {
+          const remoteEntries = await this.read(remoteTip);
+          const published = new Set([...remoteEntries.keys(), ...remoteEntries.publications.keys()]);
+          if (head) {
+            const reviews = await this.threads();
+            const provisional = new Set(reviews.flatMap(review => review.paperHistory.filter(record => !published.has(record.id)).map(record => record.paperCommit)));
+            const order = (await this.git.text(['rev-list', '--topo-order', '--reverse', head])).split('\n');
+            for (const commit of order.filter(commit => commit === head || provisional.has(commit))) { await this.checkpoint(commit, new Map(), true, published); }
+          }
+          const tip = await this.git.ref(LOCAL_REF);
+          await this.read(tip);
+          return tip;
+        });
+        if (!publishTip) { return this.syncResult(null); }
+        if (publishTip !== remoteTip) { await beforePush(await inspectPublication(this.git, publishTip, remoteTip, endpoint.url)); }
+        // Local saves can continue; never substitute a newer tip after approval.
+        const pushed = await this.transport.push(endpoint, publishTip);
+        if (pushed.code === 0) { return this.syncResult(publishTip); }
         const status = pushed.stdout.toString('utf8') + pushed.stderr;
-        const concurrentRejection = /\[(?:remote )?rejected\].*\((fetch first|non-fast-forward|failed to update ref)\)/.test(status);
-        if (!concurrentRejection) { throw new GitError(pushed, 'push'); }
-        // Another user published first: fetch, union immutable events, and retry a normal push.
+        if (!/\[(?:remote )?rejected\].*\((fetch first|non-fast-forward|failed to update ref)\)/.test(status)) { throw new GitError(pushed, 'push'); }
       }
-      throw new Error('Other users are updating comments. Your local comments are saved; sync again.');
+      throw new Error('Remote comments keep changing. Your work is saved locally; try Sync Comments again.');
     });
   }
 
-  private async receive(remote: string): Promise<string | null> {
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(remote)) { throw new Error('Choose a valid Git remote name with GiTex: Connect Repository.'); }
-    await this.git.text(['remote', 'get-url', remote]);
-    const tracking = `refs/gitex/remotes/${createHash('sha256').update(remote).digest('hex')}`;
-    const advertised = await this.git.run(['ls-remote', '--exit-code', '--heads', remote, REMOTE_REF]);
-    let remoteTip: string | null = null;
-    if (advertised.code === 0) {
-      await this.git.text(['fetch', '--no-tags', '--no-write-fetch-head', remote, `+${REMOTE_REF}:${tracking}`]);
-      remoteTip = await this.git.ref(tracking);
-    } else if (advertised.code !== 2) { throw new GitError(advertised, 'ls-remote'); }
+  private async syncResult(publishedTip: string | null): Promise<SyncResult> {
+    const localTip = await this.git.ref(LOCAL_REF);
+    const threads = materialize([...await this.read(localTip)].map(([, entry]) => entry.event));
+    return { threads, localTip, publishedTip };
+  }
+
+  private receive(endpoint: ReviewEndpoint): Promise<string | null> {
+    return this.transport.snapshot(endpoint, remoteTip => this.exclusive(() => this.mergeRemote(remoteTip)));
+  }
+
+  /** A bounded local compare-and-swap transaction; it performs no network I/O. */
+  private async mergeRemote(remoteTip: string | null): Promise<string | null> {
     const remoteEntries = await this.read(remoteTip);
     for (let attempt = 0; attempt < 8; attempt++) {
       const localTip = await this.git.ref(LOCAL_REF);
       const localEntries = await this.read(localTip);
       const union = new Entries(localEntries);
       union.documents = new Map(localEntries.documents);
+      union.publications = new Map(localEntries.publications);
+      for (const [id, publication] of remoteEntries.publications) {
+        if (union.publications.has(id) && !isDeepStrictEqual(union.publications.get(id), publication)) { throw new Error('Conflicting immutable paper publication IDs.'); }
+        union.publications.set(id, publication);
+      }
       for (const [hash, oid] of remoteEntries.documents) {
         if (union.documents.has(hash) && union.documents.get(hash) !== oid) { throw new Error('Conflicting GiTex document snapshots.'); }
         union.documents.set(hash, oid);
       }
       for (const [id, entry] of remoteEntries) {
-        if (union.has(id) && union.get(id)!.oid !== entry.oid) { throw new Error('Conflicting immutable comment IDs. Sync stopped without overwriting data.'); }
+        if (union.has(id) && !isDeepStrictEqual(union.get(id)!.event, entry.event)) { throw new Error('Conflicting immutable comment IDs. Sync stopped without overwriting data.'); }
         union.set(id, entry);
       }
       materialize([...union.values()].map(entry => entry.event));
+      validatePublications(union);
       if (!remoteTip || localTip === remoteTip) { return remoteTip; }
       if (!localTip) {
         if (await this.advance(remoteTip, null)) { return remoteTip; }
       } else {
         const forward = await this.git.run(['merge-base', '--is-ancestor', localTip, remoteTip]);
-        if (forward.code === 0 && union.size === remoteEntries.size) {
+        if (forward.code === 0 && union.size === remoteEntries.size && union.publications.size === remoteEntries.publications.size) {
           if (await this.advance(remoteTip, localTip)) { return remoteTip; }
           continue;
         }
         if (forward.code !== 0 && forward.code !== 1) { throw new GitError(forward, 'merge-base'); }
         const ancestor = await this.git.run(['merge-base', '--is-ancestor', remoteTip, localTip]);
-        if (ancestor.code === 0 && union.size === localEntries.size) { return remoteTip; }
+        if (ancestor.code === 0 && union.size === localEntries.size && union.publications.size === localEntries.publications.size) { return remoteTip; }
         if (ancestor.code !== 0 && ancestor.code !== 1) { throw new GitError(ancestor, 'merge-base'); }
         const commit = await this.commit(union, [localTip, remoteTip]);
         if (await this.advance(commit, localTip)) { return remoteTip; }
@@ -207,51 +470,92 @@ export class ReviewStore {
 
   private async read(tip: string | null): Promise<Entries> {
     if (!tip) { return new Entries(); }
-    const listing = await this.git.text(['ls-tree', '-r', '-z', tip]);
+    if (this.cachedArchive?.tip === tip) {
+      const copy = new Entries(this.cachedArchive.entries); copy.documents = new Map(this.cachedArchive.entries.documents);
+      copy.publications = new Map(this.cachedArchive.entries.publications); return copy;
+    }
+    const listing = await this.git.text(['ls-tree', '-r', '-l', '-z', tip]);
     const records = listing.split('\0').filter(Boolean).map(record => {
-      const match = /^100644 blob ([a-f0-9]+)\t(.+)$/.exec(record);
+      const match = /^100644 blob ([a-f0-9]+) +([0-9]+)\t(.+)$/.exec(record);
       if (!match) { throw new Error('The GiTex metadata branch contains unsupported entries.'); }
-      return { oid: match[1], path: match[2] };
+      return { oid: match[1], size: Number(match[2]), path: match[3] };
     });
     if (!records.some(record => record.path === '_gitex.json') || records.some(record =>
-      record.path !== '_gitex.json' && !/^events\/[a-f0-9-]{36}\.json$/.test(record.path) && !/^documents\/[a-f0-9]{64}\.txt$/.test(record.path))) {
+      record.path !== '_gitex.json' && !/^(events|comments|papers)\/[a-f0-9-]{36}\.json$/.test(record.path) && !/^documents\/[a-f0-9]{64}\.txt$/.test(record.path))) {
       throw new Error('The gitex-comments branch is not a GiTex metadata branch. It has not been overwritten.');
     }
-    const metadata = records.filter(record => !record.path.startsWith('documents/'));
-    const batch = await this.git.run(['cat-file', '--batch'], metadata.map(record => record.oid).join('\n') + '\n');
-    if (batch.code !== 0) { throw new GitError(batch, 'cat-file'); }
-    const entries = new Entries();
+    const entries = new Entries(), files = new Map<string, string>();
     for (const record of records.filter(record => record.path.startsWith('documents/'))) { entries.documents.set(record.path.slice(10, -4), record.oid); }
-    let cursor = 0;
-    for (const record of metadata) {
-      const end = batch.stdout.indexOf(10, cursor);
-      const header = batch.stdout.subarray(cursor, end).toString('utf8');
-      const match = /^([a-f0-9]+) blob (\d+)$/.exec(header);
-      if (end < 0 || !match || match[1] !== record.oid) { throw new Error('Cannot read GiTex metadata objects.'); }
-      const length = Number(match[2]);
-      const content = batch.stdout.subarray(end + 1, end + 1 + length).toString('utf8');
-      cursor = end + 2 + length;
-      if (record.path === '_gitex.json') {
-        if (content !== marker && content !== legacyMarker) { throw new Error('Unsupported GiTex metadata format. Update GiTex before syncing.'); }
-      } else {
-        const event = parseEvent(content);
-        if (record.path !== `events/${event.id}.json`) { throw new Error('Invalid GiTex event filename.'); }
-        if ('anchor' in event && event.anchor?.tracking && !entries.documents.has(event.anchor.documentHash)) { throw new Error('A GiTex document snapshot is missing.'); }
-        entries.set(event.id, { event, oid: record.oid });
+    const metadata = records.filter(record => !record.path.startsWith('documents/'));
+    let archiveVersion = 0;
+    // Bound each Git response instead of reading the entire archive through one 32 MiB pipe.
+    for (let offset = 0; offset < metadata.length;) {
+      const chunk: typeof metadata = []; let size = 0;
+      do { const record = metadata[offset++]; chunk.push(record); size += record.size + 100; }
+      while (offset < metadata.length && size + metadata[offset].size < 8 * 1024 * 1024);
+      const batch = await this.git.run(['cat-file', '--batch'], chunk.map(record => record.oid).join('\n') + '\n');
+      if (batch.code !== 0) { throw new GitError(batch, 'cat-file'); }
+      let cursor = 0;
+      for (const record of chunk) {
+        const end = batch.stdout.indexOf(10, cursor);
+        const match = /^([a-f0-9]+) blob (\d+)$/.exec(batch.stdout.subarray(cursor, end).toString('utf8'));
+        if (end < 0 || !match || match[1] !== record.oid || Number(match[2]) !== record.size) { throw new Error('Cannot read GiTex metadata objects.'); }
+        const content = batch.stdout.subarray(end + 1, end + 1 + record.size).toString('utf8');
+        this.cacheBlob(content, record.oid);
+        cursor = end + 2 + record.size;
+        if (record.path === '_gitex.json') {
+          archiveVersion = JSON.parse(content).version;
+          if (![commentMarker, checkpointMarker, marker, legacyMarker].includes(content)) { throw new Error('Unsupported GiTex metadata format. Update GiTex before syncing.'); }
+        } else if (record.path.startsWith('papers/')) {
+          const id = record.path.slice(7, -5); entries.publications.set(id, JSON.parse(content));
+        } else { files.set(record.path, content); }
       }
     }
+    for (const event of archiveEvents(files, archiveVersion)) {
+      if ('anchor' in event && event.anchor?.tracking && !entries.documents.has(event.anchor.documentHash)) { throw new Error('A GiTex document snapshot is missing.'); }
+      entries.set(event.id, { event });
+    }
+    if (archiveVersion < 3 && [...entries.values()].some(entry => entry.event.type === 'checkpoint' || entry.event.paperCommit)) {
+      throw new Error('Commit-scoped reviews require GiTex metadata format 3.');
+    }
+    if (entries.publications.size && archiveVersion < 4) { throw new Error('Paper publications require GiTex metadata format 4.'); }
     materialize([...entries.values()].map(entry => entry.event));
+    validatePublications(entries);
+    const cached = new Entries(entries); cached.documents = new Map(entries.documents); cached.publications = new Map(entries.publications);
+    this.cachedArchive = { tip, entries: cached };
     return entries;
   }
 
+  private cacheBlob(text: string, oid: string): void {
+    if (this.blobOids.size >= 4096) { this.blobOids.delete(this.blobOids.keys().next().value!); }
+    this.blobOids.set(createHash('sha256').update(text).digest('hex'), oid);
+  }
+
+  private async writeBlob(text: string): Promise<string> {
+    const known = this.blobOids.get(createHash('sha256').update(text).digest('hex'));
+    if (known) { return known; }
+    const oid = await this.git.text(['hash-object', '-w', '--stdin'], text);
+    this.cacheBlob(text, oid); return oid;
+  }
+
   private async commit(entries: Entries, parents: string[]): Promise<string> {
-    const markerOid = await this.git.text(['hash-object', '-w', '--stdin'], entries.documents.size ? marker : legacyMarker);
-    const eventTree = await this.git.text(['mktree'], [...entries].sort(([a], [b]) => a.localeCompare(b, 'en'))
-      .map(([id, entry]) => `100644 blob ${entry.oid}\t${id}.json\n`).join(''));
-    const documents = entries.documents.size ? await this.git.text(['mktree'], [...entries.documents].sort(([a], [b]) => a.localeCompare(b, 'en'))
-      .map(([hash, oid]) => `100644 blob ${oid}\t${hash}.txt\n`).join('')) : undefined;
-    const tree = await this.git.text(['mktree'], `100644 blob ${markerOid}\t_gitex.json\n040000 tree ${eventTree}\tevents\n` +
-      (documents ? `040000 tree ${documents}\tdocuments\n` : ''));
+    validatePublications(entries);
+    const files = archiveFiles([...entries.values()].map(entry => entry.event));
+    for (const publication of entries.publications.values()) { files.set(`papers/${publication.id}.json`, JSON.stringify(publication)); }
+    const directories = new Map<string, string[]>();
+    for (const [file, text] of files) {
+      const [directory, name] = file.split('/');
+      const oid = await this.writeBlob(text);
+      const lines = directories.get(directory) ?? []; lines.push(`100644 blob ${oid}\t${name}\n`); directories.set(directory, lines);
+    }
+    if (entries.documents.size) { directories.set('documents', [...entries.documents].map(([hash, oid]) => `100644 blob ${oid}\t${hash}.txt\n`)); }
+    const markerOid = await this.writeBlob(commentMarker);
+    const roots = [`100644 blob ${markerOid}\t_gitex.json\n`];
+    for (const [name, lines] of directories) {
+      const oid = await this.git.text(['mktree'], lines.sort().join(''));
+      roots.push(`040000 tree ${oid}\t${name}\n`);
+    }
+    const tree = await this.git.text(['mktree'], roots.join(''));
     return this.git.text(['-c', 'commit.gpgsign=false', 'commit-tree', tree, ...parents.flatMap(parent => ['-p', parent])], 'GiTex review update\n');
   }
 

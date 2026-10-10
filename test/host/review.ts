@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { chromium, Frame } from 'playwright-core';
 import { Git } from '../../src/git';
-import { ReviewStore, REMOTE_REF } from '../../src/store';
+import { ReviewStore, REMOTE_REF } from '../reviewStore';
 import { reviewAppearance } from './appearance';
 
 async function until(check: () => Promise<boolean>, label: string): Promise<void> {
@@ -26,7 +26,7 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   const realPull = repository.store.pull.bind(repository.store);
   let syncs = 0, pulls = 0;
   let hold: Promise<void> | undefined;
-  repository.store.sync = async (remote: string) => { syncs++; await hold; return realSync(remote); };
+  repository.store.sync = async (...args: Parameters<ReviewStore['sync']>) => { syncs++; await hold; return realSync(...args); };
   repository.store.pull = async (remote: string) => { pulls++; return realPull(remote); };
   const native = thread.comments[0] as any;
   const id = native.commentId;
@@ -61,7 +61,7 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   await new Git(path.dirname(store.root)).text(['clone', bare, peerPath]);
   const peer = new ReviewStore(peerPath);
   await peer.git.text(['config', 'user.name', 'Remote Reviewer']);
-  await peer.git.text(['config', 'user.email', 'remote@example.test']);
+  await peer.git.text(['config', 'user.email', (await store.author()).email]);
   await peer.pull();
   assert.equal((await rootComment(peer)).body, 'Edited from the inline widget', 'save auto-pushes the edit');
   const remoteEdit = async (body: string) => {
@@ -169,9 +169,11 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   await view.locator('#reply').fill('Reply saved through the panel');
   await view.getByRole('button', { name: 'Save reply', exact: true }).click();
   await until(async () => syncs === noNetwork.syncs + 1, 'one sync after reply');
-  await settle(); await peer.pull();
+  await settle();
+  assert.equal(app.syncErrors.get(store.root), undefined, 'automatic sync merges remote comments before publishing');
+  await peer.pull();
   assert.ok((await peer.threads())[0].comments.some(comment => comment.body === 'Reply saved through the panel'));
-  assert.equal((await rootComment(store)).body, 'Remote change awaiting the next save', 'save auto-pulls remote changes too');
+  assert.equal((await rootComment(store)).body, 'Remote change awaiting the next save', 'automatic sync applies remote changes');
   assert.equal(pulls, noNetwork.pulls);
 
   await firstComment.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -213,6 +215,35 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   await vscode.commands.executeCommand('gitex.pull');
   assert.ok((await store.threads())[0].comments.some(comment => comment.body === 'Visible after manual fetch'));
 
+  // A slow push must not block the next editor save or claim that save was shared.
+  await vscode.commands.executeCommand('gitex.reply', { thread, text: 'Ready for the slow push' });
+  const gitRun = repository.store.git.run.bind(repository.store.git);
+  let pushing = false;
+  let releasePush!: () => void;
+  const held = new Promise<void>(resolve => { releasePush = resolve; });
+  repository.store.git.run = async (args: string[], input?: string | Buffer) => {
+    if (args[0] === 'push') { pushing = true; await held; }
+    return gitRun(args, input);
+  };
+  const slowSync = app.sync(repository);
+  try {
+    await until(async () => pushing, 'push awaiting the remote');
+    let saved = false;
+    const save = vscode.commands.executeCommand('gitex.reply', { thread, text: 'Saved during the slow push' }).then(() => { saved = true; });
+    await until(async () => saved, 'editor save must finish before the push is released'); await save;
+  } finally {
+    releasePush(); await slowSync;
+    repository.store.git.run = gitRun;
+  }
+  await until(async () => (await view.locator('#status').textContent())!.includes('Newer comments remain saved locally'), 'pending publication feedback');
+  await peer.pull();
+  assert.ok(!(await peer.threads())[0].comments.some(comment => comment.body === 'Saved during the slow push'));
+  await app.pull(repository);
+  assert.match(app.syncErrors.get(repository.store.root), /Newer comments remain saved locally/);
+  await app.sync(repository); await peer.pull();
+  assert.ok((await peer.threads())[0].comments.some(comment => comment.body === 'Saved during the slow push'));
+  assert.equal(app.syncErrors.has(repository.store.root), false);
+
   await config.update('remote', 'nonexistent', vscode.ConfigurationTarget.WorkspaceFolder);
   await config.update('autoSyncOnSave', true, vscode.ConfigurationTarget.WorkspaceFolder);
   const beforeOffline = syncs;
@@ -234,6 +265,29 @@ export async function reviewTests(app: any, store: ReviewStore, thread: vscode.C
   await view.getByRole('button', { name: 'Cancel', exact: true }).first().click();
   await view.getByRole('checkbox', { name: 'Resolved', exact: true }).uncheck();
   await until(async () => app.nativeThreads.has(originalItem.key), 'restore reopened inline widget');
+  await peer.pull();
+  const commonRevision = (await rootComment(store)).revisions.at(-1)!.id;
+  await store.edit(id, id, 'Same author on device one', commonRevision);
+  await peer.edit(id, id, 'Same author on device two', commonRevision);
+  await store.sync(); await peer.sync(); await app.pull(repository);
+  assert.equal((await rootComment(store)).conflictingRevisions.length, 2);
+  await until(async () => (await firstComment.locator('.draft-warning').first().textContent())!.includes('Concurrent edits'), 'visible concurrent edit warning');
+  await firstComment.getByRole('button', { name: 'Edit', exact: true }).click();
+  await firstComment.locator('textarea').fill('Author reconciled both devices');
+  await firstComment.getByRole('button', { name: 'Save edit', exact: true }).click();
+  await until(async () => (await rootComment(store)).body === 'Author reconciled both devices', 'author resolves known conflict heads from Review');
+  await settle(); assert.equal((await rootComment(store)).conflictingRevisions.length, 0);
+  await peer.git.text(['config', 'user.email', 'other-author@example.test']);
+  await peer.reply(id, 'Only this other author can edit'); await peer.sync(); await app.pull(repository);
+  const foreign = (await store.threads()).find(review => review.id === id)!.comments.find(comment => comment.body === 'Only this other author can edit')!;
+  const foreignNative = app.nativeThreads.get(originalItem.key).comments.find((comment: any) => comment.commentId === foreign.id);
+  assert.equal(foreignNative.contextValue, 'gitex-comment');
+  await assert.rejects(app.editComment(foreignNative), /Only the original author/);
+  await until(async () => (await view.locator('.comment-card').filter({ hasText: 'Only this other author can edit' }).count()) === 1, 'other author comment in Review');
+  assert.equal(await view.locator('.comment-card').filter({ hasText: 'Only this other author can edit' }).getByRole('button', { name: 'Edit', exact: true }).isVisible(), false);
+  await assert.rejects(app.panelAction(app.getChildren().find((item: any) => item.review.id === id),
+    { type: 'edit', commentId: foreign.id, basedOn: foreign.id, body: 'Attempted foreign edit', requestId: 'foreign-edit' }), /Only the original author/);
+  await peer.git.text(['config', 'user.email', (await store.author()).email]);
   for (const panel of app.panels.values()) { panel.dispose(); }
   await browser.close();
   repository.store.sync = realSync; repository.store.pull = realPull;

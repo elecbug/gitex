@@ -6,14 +6,19 @@ import { LocalReference } from './localTracking';
 
 export interface ReviewContext {
   repository: string;
+  reviewNotice?: string;
+  notInherited?: boolean;
+  editableComments?: string[];
   location: Location;
   localReference?: LocalReference;
   sync: 'automatic' | 'manual' | 'failed';
   status: string;
+  paperCommit?: string | null;
+  commitError?: string;
 }
 
 export type ReviewAction = { type: 'ready' } | { type: 'source'; reference?: 'saved' | 'local' } |
-  { type: 'edit'; commentId: string; body: string; basedOn: string; requestId: string } |
+  { type: 'edit'; commentId: string; body: string; basedOn: string; merges?: string[]; requestId: string } |
   { type: 'reply'; body: string; requestId: string } |
   { type: 'move'; requestId: string } |
   { type: 'resolve'; resolved: boolean; requestId: string };
@@ -60,8 +65,8 @@ export class ReviewPanel implements vscode.Disposable {
     this.sendDraft();
   }
 
-  preserveDraft(commentId: string, body: string, basedOn: string): void {
-    this.drafts.set(`${this.key}:${commentId}`, { key: this.key, commentId, body, basedOn });
+  preserveDraft(commentId: string, body: string, basedOn: string, key = this.key): void {
+    this.drafts.set(`${key}:${commentId}`, { key, commentId, body, basedOn });
     this.sendDraft();
   }
 
@@ -86,5 +91,5 @@ function validAction(value: unknown): value is ReviewAction {
   if (event.type === 'move') { return typeof event.requestId === 'string'; }
   if (event.type === 'resolve') { return typeof event.resolved === 'boolean' && typeof event.requestId === 'string'; }
   if (typeof event.body !== 'string' || !event.body.trim() || event.body.length > 100_000 || typeof event.requestId !== 'string') { return false; }
-  return event.type === 'reply' || (event.type === 'edit' && typeof event.commentId === 'string' && typeof event.basedOn === 'string');
+  return event.type === 'reply' || (event.type === 'edit' && typeof event.commentId === 'string' && typeof event.basedOn === 'string' && (event.merges === undefined || Array.isArray(event.merges) && event.merges.every(id => typeof id === 'string')));
 }

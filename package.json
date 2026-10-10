@@ -3,7 +3,7 @@
   "displayName": "GiTex",
   "description": "Git-backed passage comments and collaboration for LaTeX papers.",
   "icon": "media/icon.png",
-  "version": "0.13.2",
+  "version": "0.15.2",
   "publisher": "elecbug",
   "license": "MIT",
   "repository": {
@@ -159,7 +159,7 @@
     "viewsWelcome": [
       {
         "view": "gitex.comments",
-        "contents": "Open a paper file to show comments for its Git repository. Repositories in subfolders are discovered automatically.\nSelect text and run [Add Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) · [Apply to Current Folder](command:gitex.applyRepository) · [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
+        "contents": "Open a paper file to show comments for its Git repository. Repositories in subfolders are discovered automatically.\nSelect text and run [Add Comment](command:gitex.addComment).\n[Clone Repository](command:gitex.clone) \u00b7 [Apply to Current Folder](command:gitex.applyRepository) \u00b7 [Connect Repository](command:gitex.connect)\nComments sync automatically after saving by default."
       }
     ],
     "menus": {
@@ -288,24 +288,24 @@
       "comments/comment/title": [
         {
           "command": "gitex.editComment",
-          "when": "commentController == gitex && comment == gitex-comment",
+          "when": "commentController == gitex && comment == gitex-owned-comment",
           "group": "inline@1"
         },
         {
           "command": "gitex.commentHistory",
-          "when": "commentController == gitex && comment == gitex-comment",
+          "when": "commentController == gitex",
           "group": "inline@2"
         }
       ],
       "comments/comment/context": [
         {
           "command": "gitex.saveComment",
-          "when": "commentController == gitex && comment == gitex-comment",
+          "when": "commentController == gitex && comment == gitex-owned-comment",
           "group": "inline@1"
         },
         {
           "command": "gitex.cancelEdit",
-          "when": "commentController == gitex && comment == gitex-comment",
+          "when": "commentController == gitex && comment == gitex-owned-comment",
           "group": "inline@2"
         }
       ]
@@ -336,7 +336,19 @@
           "type": "boolean",
           "default": true,
           "scope": "resource",
-          "description": "Fetch and push comments once in the background after creating a comment, replying, or saving an edit or manual location move. Opening, clicking, expanding, or canceling comments does not access the remote."
+          "description": "Pull, merge and push comments once after creating a comment, replying, editing or moving a comment. Reviews follow the current paper commit; updating the paper source is not required. First-push acknowledgment and the snapshot-sharing setting can hold publication while keeping comments local."
+        },
+        "gitex.autoSyncOnCommit": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Copy applicable reviews to each newly observed paper commit and synchronize comments in the background, independently of Auto Sync on Save. Older paper versions retain their own reviews. The same snapshot-sharing policy applies."
+        },
+        "gitex.autoShareUncommittedSnapshots": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "Allow automatic comment sync to share complete document snapshots not present in the current paper commit history, including unsaved text. First-push disclosure is still required. When disabled, approve these snapshots with Sync Comments; comments remain saved locally."
         }
       }
     },

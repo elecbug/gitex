@@ -18,8 +18,8 @@ export interface Anchor {
   afterBoundary?: 'document-end' | 'file-end';
   // selected contains only the owned text, even when the UI covers whole lines.
   logicalRange?: LogicalRange;
-  /** Exact editor-operation tracking; fragment offsets address the LF-normalized snapshot. */
-  tracking?: { version: 1; fragments: { start: number; end: number }[]; insertions?: { start: number; end: number }[] };
+  /** Snapshot-relative fragment offsets, with optional observed/reconstructed provenance. */
+  tracking?: { version: 1; evidence?: 'observed' | 'reconstructed'; fragments: { start: number; end: number }[]; insertions?: { start: number; end: number }[] };
 }
 
 export interface Estimate {
@@ -34,7 +34,7 @@ export interface EstimateCandidate extends Estimate { reference: 'saved' | 'loca
 export type Location = ({ kind: 'attached'; startLine: number; endLine: number; similarity?: number; logicalRange?: LogicalRange } |
   ({ kind: 'uncertain'; candidates?: EstimateCandidate[] } & Estimate) |
   { kind: 'pending'; reason: string } |
-  { kind: 'outdated'; reason: string }) & { source?: 'local' };
+  { kind: 'outdated'; reason: string }) & { source?: 'local'; evidence?: 'observed' | 'reconstructed' };
 
 export function locationEstimates(location: Location): EstimateCandidate[] {
   return location.kind === 'uncertain' ? location.candidates ?? [{ ...location, reference: location.source === 'local' ? 'local' : 'saved' }] : [];

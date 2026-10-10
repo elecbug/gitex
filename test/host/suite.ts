@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
 import { Git } from '../../src/git';
-import { ReviewStore } from '../../src/store';
+import { ReviewStore } from '../reviewStore';
 import { reviewTests } from './review';
 import { moveTests } from './move';
 import { repositoryTests } from './repositories';
@@ -12,8 +12,11 @@ import { blankLineTests } from './blankLines';
 import { editTrackingTests } from './editTracking';
 import { highlightTests } from './highlights';
 import { documentSyncTests } from './documentSync';
+import { snapshotPrivacyTests } from './snapshotPrivacy';
+import { commitReviewTests } from './commitReviews';
 
 export async function run(): Promise<void> {
+  await vscode.workspace.getConfiguration('gitex').update('autoSyncOnCommit', false, vscode.ConfigurationTarget.Workspace);
   const metadata = require('../../../package.json');
   const extension = vscode.extensions.getExtension(`${metadata.publisher}.${metadata.name}`);
   assert.ok(extension, 'the development extension must be discoverable');
@@ -39,7 +42,7 @@ export async function run(): Promise<void> {
   const repository = [...app.repositories.values()][0] as any;
   const realSync = repository.store.sync.bind(repository.store);
   let automaticSyncs = 0;
-  repository.store.sync = async (remote: string) => { automaticSyncs++; return realSync(remote); };
+  repository.store.sync = async (...args: Parameters<ReviewStore['sync']>) => { automaticSyncs++; return realSync(...args); };
   const settle = async () => { await Promise.all([...app.syncs.values()]); };
   const head = await store.head();
   const document = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(root, 'main.tex')));
@@ -47,6 +50,9 @@ export async function run(): Promise<void> {
   editor.selection = new vscode.Selection(2, 0, 2, 18);
   await vscode.commands.executeCommand('gitex.addComment', '실제 편집기에서 작성한 주석');
   await settle(); assert.equal(automaticSyncs, 1);
+  repository.store.sync = realSync;
+  await snapshotPrivacyTests(app, repository);
+  repository.store.sync = async (...args: Parameters<ReviewStore['sync']>) => { automaticSyncs++; return realSync(...args); };
   let threads = await store.threads();
   assert.equal(threads.length, 1);
   assert.equal(threads[0].anchor.startLine, 2);
@@ -131,6 +137,7 @@ export async function run(): Promise<void> {
   await editTrackingTests(app, store);
   await highlightTests(app, store);
   await documentSyncTests(app, store);
+  await commitReviewTests(app, store);
   await repositoryTests(app, store);
   console.log('GiTex extension host: applying repositories, unsaved-file protection, save-only sync, editing, history, drafts, and anchoring passed.');
 }

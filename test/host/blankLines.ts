@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
-import { LOCAL_REF, ReviewStore } from '../../src/store';
+import { LOCAL_REF, ReviewStore } from '../reviewStore';
 
 async function until(check: () => Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 10_000;

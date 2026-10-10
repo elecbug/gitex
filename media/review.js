@@ -93,6 +93,8 @@
     const location = element('h1', '', locationRow); location.id = 'location';
     const match = element('span', '', locationRow, 'badge'); match.id = 'match-state';
     const lines = element('p', '', heading, 'line-range');
+    const paperCommit = element('p', '', heading, 'paper-commit'); paperCommit.id = 'paper-commit';
+    const paperStatus = element('p', '', heading, 'reference-label'); paperStatus.id = 'paper-review-status';
     const contextNote = element('p', '', contextCard, 'context-note'); contextNote.hidden = true;
     const candidates = element('div', undefined, contextCard, 'candidate-locations'); candidates.id = 'candidate-locations'; candidates.hidden = true;
     const passage = element('details', undefined, contextCard, 'passage'); passage.open = true;
@@ -138,10 +140,13 @@
     icon('history', trackingSummary);
     const trackingLabel = element('span', 'Tracking history', trackingSummary);
     const trackingEntries = element('div', undefined, tracking, 'revision-list');
+    const paperHistory = element('details', undefined, root, 'tracking'); paperHistory.id = 'paper-history';
+    const paperSummary = element('summary', 'Paper commit history', paperHistory);
+    const paperEntries = element('div', undefined, paperHistory, 'revision-list');
     const view = { key, root, repository, location, match, lines, contextNote, candidates, excerpt, passage, passageSummary, source, originalExcerpt,
       surroundings, surroundingsLabel, surroundingsBody, localContext, localSummary, localBody,
       count, syncInfo, syncLabel, status, comments, resolved, resolvedNote, savedResolved: false, nodes: new Map(), error: '',
-      trackingLabel, trackingEntries, trackingSignature: '', scroll: 0 };
+      trackingLabel, trackingEntries, trackingSignature: '', paperCommit, paperStatus, paperSummary, paperEntries, paperSignature: '', scroll: 0 };
     source.onclick = () => vscode.postMessage({ type: 'source', key: view.key });
     move.onclick = () => submit(view, { type: 'move' }, [move], () => {}, () => {}, move, 'Moving…');
     resolved.onchange = () => submit(view, { type: 'resolve', resolved: resolved.checked }, [resolved],
@@ -159,6 +164,7 @@
     const edited = element('span', 'Edited', author, 'edited'); edited.hidden = true;
     const timestamp = element('time', '', meta, 'timestamp');
     const body = element('p', '', details, 'body');
+    const conflict = element('p', '', details, 'draft-warning'); conflict.setAttribute('role', 'status');
     const actions = element('div', undefined, details, 'comment-actions');
     const edit = button('Edit', actions, 'quiet', 'edit');
     const form = element('form', undefined, details, 'edit-form'); form.hidden = true;
@@ -173,10 +179,11 @@
     const history = element('details', undefined, details, 'history');
     const historySummary = element('summary', 'History', history);
     const revisions = element('div', undefined, history, 'revision-list');
-    const node = { details, name, avatar, edited, timestamp, body, edit, form, textarea, historySummary, revisions, changed,
+    const node = { details, name, avatar, edited, timestamp, body, conflict, edit, form, textarea, historySummary, revisions, changed,
       current: comment, basedOn: undefined, signature: '', validate: () => {} };
     edit.onclick = () => {
       node.basedOn = node.current.revisions.at(-1).id;
+      node.merges = node.current.conflictingRevisions;
       textarea.value = node.current.body; changed.textContent = '';
       form.hidden = false; edit.hidden = true; node.validate(); textarea.focus();
     };
@@ -186,7 +193,7 @@
     };
     cancel.onclick = close;
     node.validate = wireComposer(view, form, textarea, save, [cancel],
-      () => ({ type: 'edit', commentId: comment.id, basedOn: node.basedOn, body: textarea.value }), close);
+      () => ({ type: 'edit', commentId: comment.id, basedOn: node.basedOn, merges: node.merges, body: textarea.value }), close);
     return node;
   }
   function historyEntry(parent, title, current, currentLabel, author, at) {
@@ -223,19 +230,27 @@
   function renderContext(view, review, context) {
     view.repository.textContent = context.repository;
     view.location.textContent = review.anchor.path;
+    view.paperCommit.textContent = context.paperCommit ? 'Paper commit ' + context.paperCommit.slice(0, 12) : 'Paper not committed yet';
+    view.paperCommit.title = context.paperCommit || '';
+    const committed = review.paperHistory.filter(record => record.paperCommit === context.paperCommit).at(-1);
+    view.paperStatus.textContent = context.commitError || (committed ?
+      'Review version for this paper commit' +
+      ' · ' + committed.status + (committed.resolved ? ' · Resolved' : ' · Open') + (committed.source === 'commit' ? '. Recorded from committed source.' : '. Includes a review saved in the working copy.') :
+      'No review record for this paper commit yet.');
     const attached = context.location.kind === 'attached';
     const uncertain = context.location.kind === 'uncertain';
     const pending = context.location.kind === 'pending';
     view.root.dataset.location = context.location.kind;
     view.lines.textContent = uncertain ? context.location.candidates ? '2 candidate locations' : 'Estimated location · ' + estimatePosition(context.location) :
       (attached ? '' : 'Saved reference · ') + range(attached ? context.location : review.anchor);
-    view.match.textContent = pending ? 'Pending document' : uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
+    view.match.textContent = pending ? context.notInherited ? 'Not inherited' : 'Pending document' : uncertain ? 'Uncertain' : !attached ? 'Outdated' : context.location.similarity === undefined ? 'Attached' :
       'Similar text · ' + Math.round(context.location.similarity * 100) + '%';
     if (context.location.source === 'local') view.match.textContent += ' · Local context';
     if (uncertain && context.location.candidates) view.match.textContent += ' · 2 candidates';
     view.match.dataset.tone = uncertain ? 'uncertain' : !attached ? 'warning' : 'accent';
-    view.contextNote.hidden = attached;
-    view.contextNote.textContent = attached ? '' : context.location.reason + (pending ? ' Use Git Pull in Source Control; Sync Comments only synchronizes reviews.' : ' Select text and use Move to editor selection to reconnect.');
+    const inferred = attached && context.location.evidence === 'reconstructed';
+    view.contextNote.hidden = attached && !context.reviewNotice && !inferred;
+    view.contextNote.textContent = [context.reviewNotice, attached ? inferred ? 'Position reconstructed from document versions; actual editor operations were not observed.' : '' : context.location.reason + (pending ? context.notInherited ? '' : ' Use Git Pull in Source Control; Sync Comments only synchronizes reviews.' : ' Select text and use Move to editor selection to reconnect.')].filter(Boolean).join(' ');
     view.candidates.hidden = !uncertain || !context.location.candidates;
     view.candidates.replaceChildren();
     for (const candidate of uncertain ? context.location.candidates || [] : []) {
@@ -292,6 +307,12 @@
         let node = view.nodes.get(comment.id);
         if (!node) { node = createNode(view, comment); view.nodes.set(comment.id, node); }
         node.current = comment;
+        node.conflict.textContent = comment.conflictingRevisions?.length ? 'Concurrent edits were preserved. Review History; the author can save the intended text to resolve them.' : '';
+        node.conflict.hidden = !comment.conflictingRevisions?.length;
+        const owned = message.context.editableComments?.includes(comment.id) ?? false;
+        node.edit.hidden = !owned || !node.form.hidden;
+        node.edit.disabled = !owned;
+        node.form.querySelector('button[type=submit]').disabled = !owned;
         const latest = comment.revisions.at(-1);
         node.name.textContent = comment.author.name;
         node.avatar.textContent = comment.author.name.trim().split(/\s+/).slice(0, 2).map(part => Array.from(part)[0] || '').join('').toUpperCase();
@@ -300,7 +321,7 @@
         node.timestamp.dateTime = comment.at; node.timestamp.title = new Date(comment.at).toLocaleString();
         node.timestamp.textContent = new Date(comment.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         node.body.textContent = comment.body;
-        node.changed.textContent = node.basedOn && node.basedOn !== latest.id ? 'This comment has changed. Your draft is preserved. Review history before saving.' : '';
+        node.changed.textContent = node.basedOn && node.basedOn !== latest.id ? 'This comment has changed. Your draft is preserved. Review history before saving.' : comment.conflictingRevisions?.length ? 'Concurrent edits were preserved. Review History and save the intended text to resolve them.' : '';
         const signature = comment.revisions.map(revision => revision.id).join(',');
         if (signature !== node.signature) {
           node.signature = signature;
@@ -328,6 +349,31 @@
           if (entry.from) reference(element('div', undefined, comparison), 'Previous reference', entry.from);
           reference(element('div', undefined, comparison), entry.kind === 'move' ? 'Moved to' : 'Reference', entry.anchor);
         });
+      }
+      const paperSignature = (message.context.paperCommit || '') + ':' + message.review.paperHistory.map(record => record.id).join(',');
+      if (paperSignature !== view.paperSignature) {
+        view.paperSignature = paperSignature; view.paperEntries.replaceChildren();
+        const records = message.review.paperHistory;
+        view.paperSummary.textContent = 'Paper commit history · ' + records.length + (records.length === 1 ? ' record' : ' records');
+        const latest = new Map(records.map(record => [record.paperCommit, record.id]));
+        for (const record of [...records].reverse()) {
+          const current = record.paperCommit === message.context.paperCommit && latest.get(record.paperCommit) === record.id;
+          const entry = historyEntry(view.paperEntries, record.paperCommit.slice(0, 12), current,
+            'Current paper commit', record.author, record.at);
+          element('p', record.paperCommit, entry, 'paper-commit');
+          element('p', record.status + (record.resolved ? ' · Resolved' : ' · Open') +
+            (latest.get(record.paperCommit) === record.id ? ' · Latest record for this commit' : ' · Earlier record'), entry, 'reference-label');
+          if (record.anchor) reference(entry, record.source === 'commit' ? 'Location in the committed source' : 'Saved working-copy reference', record.anchor);
+          else element('p', record.reason || record.status, entry, 'reference-label');
+          const discussion = element('details', undefined, entry, 'surroundings');
+          element('summary', 'Recorded comments · ' + record.comments.length, discussion);
+          for (const saved of record.comments) {
+            const comment = (message.review.archivedComments || message.review.comments).find(comment => comment.id === saved.id);
+            const revision = comment?.revisions.find(revision => revision.id === saved.revision);
+            element('p', revision ? revision.author.name + ' · ' + new Date(revision.at).toLocaleString() : 'Recorded revision', discussion, 'reference-label');
+            element('pre', revision?.body || '(Revision unavailable)', discussion);
+          }
+        }
       }
       if (switching) window.scrollTo(0, view.scroll);
     } else if (message.type === 'draft') {

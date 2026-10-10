@@ -7,7 +7,7 @@ import { createAnchor, locateAnchor, renewAnchor } from '../src/anchor';
 import { Git } from '../src/git';
 import { EditTracking, enableEditTracking } from '../src/editTracking';
 import { materialize, parseEvent, validPath } from '../src/model';
-import { LOCAL_REF, REMOTE_REF, ReviewStore } from '../src/store';
+import { LOCAL_REF, REMOTE_REF, ReviewStore } from './reviewStore';
 import { snapshotChangesPresent } from '../src/documentSync';
 
 const paper = '\\documentclass{article}\n\\begin{document}\nA shared result.\n\\end{document}\n';
@@ -45,7 +45,7 @@ test('comments round-trip through a bare repository without changing paper HEAD,
     content: await readFile(path.join(a.root, 'main.tex'), 'utf8') };
   const id = await a.create(anchor, '수정 이유: 결과를 검토해주세요.');
   await a.sync();
-  const received = await b.sync();
+  const received = await b.pull(); await b.sync();
   assert.equal(received[0].id, id);
   assert.equal(received[0].comments[0].body, '수정 이유: 결과를 검토해주세요.');
   assert.equal(received[0].comments[0].author.name, 'Alice');
@@ -58,22 +58,22 @@ test('comments round-trip through a bare repository without changing paper HEAD,
 test('offline replies and concurrent resolve/reopen events converge without losing either reply', async t => {
   const { a, b, anchor } = await fixture(t);
   const id = await a.create(anchor, 'Check this result');
-  await a.sync(); await b.sync();
+  await a.sync(); await b.pull(); await b.sync();
   await a.reply(id, 'Alice reply'); await a.setResolved(id, true);
   await b.reply(id, 'Bob reply'); await b.setResolved(id, false);
-  await a.sync(); await b.sync(); await a.sync();
+  await a.sync(); await b.pull(); await b.sync(); await a.pull(); await a.sync();
   const left = await a.threads();
   assert.deepEqual(left, await b.threads());
   assert.equal(left[0].comments.length, 3);
   assert.deepEqual(new Set(left[0].comments.map(comment => comment.body)), new Set(['Check this result', 'Alice reply', 'Bob reply']));
-  await a.setResolved(id, true); await a.sync(); await b.sync();
+  await a.setResolved(id, true); await a.sync(); await b.pull(); await b.sync();
   assert.equal((await b.threads())[0].resolved, true);
   const before = await a.git.ref(LOCAL_REF);
   await a.sync();
   assert.equal(await a.git.ref(LOCAL_REF), before, 'an up-to-date sync must not create more commits');
 });
 
-test('simultaneous first publication retries a rejected push and preserves both users', async t => {
+test('simultaneous first publication retries automatic merge and preserves both users', async t => {
   const { a, b, anchor } = await fixture(t);
   await a.create(anchor, 'Alice starts offline');
   await b.create(anchor, 'Bob starts offline');
@@ -92,8 +92,10 @@ test('simultaneous first publication retries a rejected push and preserves both 
       return run(args, input);
     };
   }
-  await Promise.all([a.sync(), b.sync()]);
-  await a.sync(); await b.sync();
+  const results = await Promise.allSettled([a.sync(), b.sync()]);
+  assert.equal(results.filter(result => result.status === 'rejected').length, 0);
+  await a.pull(); await a.sync(); await b.pull(); await b.sync();
+  await a.pull();
   assert.equal((await a.threads()).length, 2);
   assert.deepEqual(await a.threads(), await b.threads());
 });
@@ -176,7 +178,7 @@ test('legacy and sentence anchors coexist, sync, and upgrade on explicit saves w
   await a.sync(); await b.pull();
   assert.equal((await b.threads())[0].anchor.sentenceContext, undefined);
   await b.reply(id, 'Save with sentence tracking', anchor, id);
-  await b.sync(); await a.pull();
+  await b.pull(); await b.sync(); await a.pull();
   const current = (await a.threads())[0];
   assert.deepEqual(current.anchor.sentenceContext, sentenceContext);
   assert.deepEqual(current.anchorHistory[0].anchor, legacy);
@@ -193,13 +195,15 @@ test('editing comments and replies preserves every version and the original auth
   await a.edit(id, replyId, 'Edited reply', replyId);
   await a.sync(); await b.pull();
   const current = (await b.threads())[0].comments[0];
-  await b.edit(id, id, 'Second edit by Bob', current.revisions.at(-1)!.id);
-  await b.sync(); await a.pull();
+  await assert.rejects(b.edit(id, id, 'Unauthorized edit', current.revisions.at(-1)!.id), /Only the original author/);
+  await b.git.text(['config', 'user.email', 'alice@example.test']);
+  await b.edit(id, id, 'Second edit on another device', current.revisions.at(-1)!.id);
+  await b.pull(); await b.sync(); await a.pull();
   const comments = (await a.threads())[0].comments;
   assert.equal(comments.length, 2);
-  assert.equal(comments[0].body, 'Second edit by Bob');
+  assert.equal(comments[0].body, 'Second edit on another device');
   assert.equal(comments[0].author.name, 'Alice');
-  assert.deepEqual(comments[0].revisions.map(revision => revision.body), ['Original comment', 'First edit', 'Second edit by Bob']);
+  assert.deepEqual(comments[0].revisions.map(revision => revision.body), ['Original comment', 'First edit', 'Second edit on another device']);
   assert.equal(comments[0].revisions.at(-1)!.author.name, 'Bob');
   assert.deepEqual(comments[1].revisions.map(revision => revision.body), ['Original reply', 'Edited reply']);
   assert.deepEqual(await new ReviewStore(a.root).threads(), await b.threads());
@@ -210,11 +214,17 @@ test('concurrent offline edits converge and both conflicting versions remain in 
   const id = await a.create(anchor, 'Shared original');
   await a.sync(); await b.pull();
   await a.edit(id, id, 'Alice version', id);
+  await b.git.text(['config', 'user.email', 'alice@example.test']);
   await b.edit(id, id, 'Bob version', id);
-  await a.sync(); await b.sync(); await a.pull();
+  await a.sync(); await b.pull(); await b.sync(); await a.pull();
   const comment = (await a.threads())[0].comments[0];
   assert.deepEqual(new Set(comment.revisions.map(revision => revision.body)), new Set(['Shared original', 'Alice version', 'Bob version']));
   assert.equal(comment.body, comment.revisions.at(-1)!.body);
+  assert.equal(comment.conflictingRevisions.length, 2);
+  await assert.rejects(a.edit(id, id, 'Unacknowledged resolution', comment.revisions.at(-1)!.id), /Concurrent edits changed/);
+  await a.edit(id, id, 'Reconciled by author', comment.revisions.at(-1)!.id, undefined, undefined, undefined, undefined, comment.conflictingRevisions);
+  await a.sync(); await b.pull();
+  assert.equal((await b.threads())[0].comments[0].conflictingRevisions.length, 0);
   assert.deepEqual(await a.threads(), await b.threads());
 });
 
@@ -225,7 +235,8 @@ test('a stale edit is rejected after pull, and an unchanged edit creates no even
   await a.edit(id, id, 'Original', id);
   assert.equal(await a.git.ref(LOCAL_REF), initial);
   await a.sync(); await b.pull();
-  await b.edit(id, id, 'Remote update', id); await b.sync(); await a.pull();
+  await b.git.text(['config', 'user.email', 'alice@example.test']);
+  await b.edit(id, id, 'Remote update', id); await b.pull(); await b.sync(); await a.pull();
   const before = await a.git.ref(LOCAL_REF);
   await assert.rejects(a.edit(id, id, 'Draft based on original', id), /changed while you were editing/);
   assert.equal(await a.git.ref(LOCAL_REF), before);
@@ -238,7 +249,8 @@ test('pull merges remote edits with unpublished local work without pushing or to
   const id = await a.create(anchor, 'Shared original');
   await a.sync(); await b.pull();
   await a.reply(id, 'Unpublished local reply');
-  await b.edit(id, id, 'Remote edit', id); await b.sync();
+  await b.git.text(['config', 'user.email', 'alice@example.test']);
+  await b.edit(id, id, 'Remote edit', id); await b.pull(); await b.sync();
   const remoteBefore = await new Git(bare).ref(REMOTE_REF);
   await writeFile(path.join(a.root, 'main.tex'), paper + '% staged\n');
   await a.git.text(['add', 'main.tex']);
@@ -289,7 +301,7 @@ test('concurrent reference updates converge without erasing either saved passage
   const left = createAnchor('main.tex', paper.replace('A shared result.', 'A shared result from Alice.'), 2, 2, await a.head());
   const right = createAnchor('main.tex', paper.replace('A shared result.', 'A shared result from Bob.'), 2, 2, await b.head());
   await a.reply(id, 'Alice update', left); await b.reply(id, 'Bob update', right);
-  await a.sync(); await b.sync(); await a.pull();
+  await a.sync(); await b.pull(); await b.sync(); await a.pull();
   const thread = (await a.threads())[0];
   assert.equal(thread.anchorHistory.length, 3);
   assert.deepEqual(new Set(thread.anchorHistory.map(entry => entry.anchor.selected[0])), new Set([anchor.selected[0], left.selected[0], right.selected[0]]));
@@ -320,7 +332,7 @@ test('logical ranges and fixed identity survive shared saves, synchronization an
   assert.equal(renewAnchor(loaded.anchor, loaded.identityAnchor, changed, locateAnchor(loaded.anchor, changed)), undefined);
   const previousRevision = loaded.anchorRevision;
   await b.reply(id, 'A reply without promoting a weak anchor');
-  await b.sync(); await a.pull();
+  await b.pull(); await b.sync(); await a.pull();
   const current = (await a.threads())[0];
   assert.equal(current.anchorRevision, previousRevision);
   assert.deepEqual(current.identityAnchor, identity);
@@ -400,7 +412,7 @@ test('concurrent manual moves keep their own before/after references and converg
   const left = createAnchor('left.tex', 'Left destination', 0, 0, await a.head());
   const right = createAnchor('right.tex', 'Right destination', 0, 0, await b.head());
   await a.move(id, left, id); await b.move(id, right, id);
-  await a.sync(); await b.sync(); await a.pull();
+  await a.sync(); await b.pull(); await b.sync(); await a.pull();
   const current = (await a.threads())[0];
   const moves = current.anchorHistory.filter(entry => entry.kind === 'move');
   assert.equal(moves.length, 2);
@@ -421,7 +433,7 @@ test('older automatic snapshots cannot undo a concurrent manual move in the same
     await b.reply(id, 'Increase the local clock');
     const oldUpdate = createAnchor('main.tex', paper.replace('shared', 'old shared'), 2, 2, await b.head());
     await b.reply(id, 'Saved offline at the old location', oldUpdate);
-    await a.sync(); await b.sync(); await a.pull();
+    await a.sync(); await b.pull(); await b.sync(); await a.pull();
     let current = (await a.threads())[0];
     assert.equal(current.anchorRevision, move); assert.deepEqual(current.anchor, destination);
     assert.deepEqual(current.identityAnchor, destination);
@@ -430,7 +442,7 @@ test('older automatic snapshots cannot undo a concurrent manual move in the same
     assert.deepEqual(await a.threads(), await b.threads());
     const newer = createAnchor(destinationPath, 'A manually chosen new passage!', 0, 0, await b.head());
     await b.reply(id, 'Saved at the new location', newer, current.anchorRevision);
-    await b.sync(); await a.pull();
+    await b.pull(); await b.sync(); await a.pull();
     current = (await a.threads())[0];
     assert.deepEqual(current.anchor, newer);
     assert.deepEqual(current.identityAnchor, destination, 'automatic snapshots after a move keep the move identity');
@@ -464,7 +476,7 @@ test('document snapshots deduplicate, synchronize independently, and wait for th
   assert.equal(await readFile(path.join(b.root, 'main.tex'), 'utf8'), paper);
   const files = (await b.git.text(['ls-tree', '-r', '--name-only', LOCAL_REF])).split('\n');
   assert.equal(files.filter(file => file.startsWith('documents/')).length, 1);
-  assert.equal(JSON.parse(await b.git.text(['show', `${LOCAL_REF}:_gitex.json`])).version, 2);
+  assert.equal(JSON.parse(await b.git.text(['show', `${LOCAL_REF}:_gitex.json`])).version, 4);
   await a.git.text(['add', 'main.tex']);
   await a.git.text(['-c', 'commit.gpgsign=false', 'commit', '-m', 'Publish the reviewed document']);
   await a.git.text(['push', 'origin', 'main']);
@@ -475,7 +487,7 @@ test('document snapshots deduplicate, synchronize independently, and wait for th
   await b.git.text(['add', 'main.tex']); await b.git.text(['-c', 'commit.gpgsign=false', 'commit', '-m', 'Later paper edit']);
   assert.equal(await b.documentAvailable(anchor, future), true, 'a snapshot in the paper ancestry allows replaying later exact changes');
   const received = (await b.threads()).find(thread => thread.id === first)!;
-  await b.reply(first, 'Reply does not discard the shared document'); await b.sync(); await a.pull();
+  await b.reply(first, 'Reply does not discard the shared document'); await b.pull(); await b.sync(); await a.pull();
   assert.deepEqual((await a.threads()).find(thread => thread.id === first)!.identityAnchor, received.identityAnchor);
   assert.equal(await a.documentText(anchor), future);
   await assert.rejects(a.create(anchor, 'Wrong snapshot', 'Not the paper'), /snapshot does not match/);
@@ -521,7 +533,7 @@ test('concurrent snapshot archives retain both documents and all reviews', async
   const aa = enableEditTracking(createAnchor('main.tex', left, 4, 4, await a.head()), left);
   const bb = enableEditTracking(createAnchor('main.tex', right, 4, 4, await b.head()), right);
   await a.create(aa, 'Alice', left); await b.create(bb, 'Bob', right);
-  await a.sync(); await b.sync(); await a.pull();
+  await a.sync(); await b.pull(); await b.sync(); await a.pull();
   assert.deepEqual(await a.threads(), await b.threads());
   for (const store of [a, b]) {
     assert.equal(await store.documentText(aa), left); assert.equal(await store.documentText(bb), right);

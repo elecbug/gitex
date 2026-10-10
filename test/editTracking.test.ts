@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSelectionAnchor, createAnchor, documentHash } from '../src/anchor';
-import { EditTracking, enableEditTracking, diffEdits, positionAt } from '../src/editTracking';
+import { EditTracking, enableEditTracking, diffEdits, reverseDiffEdits, positionAt } from '../src/editTracking';
 import { validAnchor } from '../src/model';
 
 function fixture(text: string, selected: string) {
@@ -238,16 +238,16 @@ test('saving a cut keeps it live, but closing or restoring its saved state makes
 });
 
 test('a partial cut remains pasteable after saving a reply at the surviving fragment', () => {
-  const f = fixture('Alpha beta.\nDestination: ', 'Alpha beta.');
-  edit(f, 6, 5, '');
+  const f = fixture('Alpha beta gamma.\nDestination: ', 'Alpha beta gamma.');
+  edit(f, 6, 11, '');
   const next = reference(f);
   f.tracker.stage('main.tex', next, f.text, 'thread');
   assert.equal(f.tracker.adopt('thread', 'next', 'main.tex', next), true);
   const at = f.text.length;
-  f.tracker.change('main.tex', f.text + 'beta.', [{ range: { start: positionAt(f.text, at), end: positionAt(f.text, at) }, text: 'beta.' }]);
-  f.text += 'beta.';
+  f.tracker.change('main.tex', f.text + 'beta gamma.', [{ range: { start: positionAt(f.text, at), end: positionAt(f.text, at) }, text: 'beta gamma.' }]);
+  f.text += 'beta gamma.';
   const highlights = f.tracker.highlights('thread', 'next', f.text);
-  assert.deepEqual(highlights.owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta.']);
+  assert.deepEqual(highlights.owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta gamma.']);
 });
 
 test('insertion highlights follow undo, deletion and line reflow', () => {
@@ -264,12 +264,12 @@ test('insertion highlights follow undo, deletion and line reflow', () => {
 });
 
 test('pasting original text into inserted text keeps the two highlight ranges disjoint and shareable', () => {
-  const f = fixture('Alpha beta. tail', 'Alpha beta.');
+  const f = fixture('Alpha beta gamma. tail', 'Alpha beta gamma.');
   edit(f, 6, 0, 'New ');
-  edit(f, 10, 5, '');
-  edit(f, 8, 0, 'beta.');
+  edit(f, 10, 11, '');
+  edit(f, 8, 0, 'beta gamma.');
   const colors = f.tracker.highlights('thread', 'revision', f.text);
-  assert.deepEqual(colors.owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta.']);
+  assert.deepEqual(colors.owned.map(range => f.text.slice(range.start, range.end)), ['Alpha ', 'beta gamma.']);
   assert.deepEqual(colors.inserted.map(range => f.text.slice(range.start, range.end)), ['Ne', 'w ']);
   const next = reference(f), peer = new EditTracking();
   assert.equal(peer.seed('peer', 'next', 'main.tex', next, f.text), true);
@@ -320,4 +320,67 @@ test('a shared reference with unchanged geometry preserves live cut tickets and 
   assert.equal(f.tracker.rebind('thread', 'reply', 'second-reply'), true);
   assert.equal(f.tracker.locate('thread', 'second-reply', f.text).kind, 'outdated');
   assert.equal(new EditTracking(f.tracker.snapshot()).locate('thread', 'second-reply', f.text).kind, 'outdated');
+});
+
+
+test('short, structural and repeated deletions cannot become unrelated delayed insertions', () => {
+  for (const [text, target] of [ ['The protocol is efficient.\nDestination: ', 'is'],
+    ['First Target text. Second Target text.\n', 'Target text.'],
+    ['Start\n\\end{figure}\nDestination: ', '\\end{figure}'], ['abcabcabcabc\nEnd', 'abcabcabcabc'] ]) {
+    const f = fixture(text, target);
+    edit(f, f.text.indexOf(target), target.length, '');
+    assert.equal(edit(f, f.text.length, 0, target).kind, 'uncertain');
+    assert.equal(reference(f), undefined);
+    assert.deepEqual(f.tracker.highlights('thread', 'revision', f.text), { owned: [], inserted: [] });
+  }
+});
+
+test('one observed edit batch can relocate a uniquely paired short selection in either direction', () => {
+  for (const text of ['A is B. Destination: ', 'Destination: A is B.']) {
+    const f = fixture(text, 'is'), start = text.indexOf('is'), at = text.startsWith('Destination') ? 0 : text.length;
+    const changes = [ { range: { start: positionAt(text, start), end: positionAt(text, start + 2) }, text: '' },
+      { range: { start: positionAt(text, at), end: positionAt(text, at) }, text: 'is' } ];
+    const afterDelete = text.slice(0, start) + text.slice(start + 2), target = at > start ? at - 2 : at;
+    f.text = afterDelete.slice(0, target) + 'is' + afterDelete.slice(target);
+    f.tracker.change('main.tex', f.text, changes);
+    assert.equal(f.tracker.locate('thread', 'revision', f.text).kind, 'attached');
+    assert.equal(reference(f).logicalRange!.startCharacter, target);
+  }
+});
+
+test('reconstructed repeated passages stay uncertain across replies, later edits and restart', () => {
+  const f = fixture('Target text.\nTarget text.\n', 'Target text.');
+  f.text = 'Target text.\n';
+  const location = f.tracker.locate('thread', 'revision', f.text, true);
+  assert.equal(location.kind, 'uncertain'); assert.equal(location.evidence, 'reconstructed');
+  assert.equal(reference(f), undefined);
+  assert.deepEqual(f.tracker.highlights('thread', 'revision', f.text), { owned: [], inserted: [] });
+  edit(f, 0, 0, 'Intro.\n');
+  assert.equal(reference(f), undefined, 'another edit must not launder ambiguous correspondence');
+  f.tracker.locate('thread', 'revision', f.text, true);
+  const restored = new EditTracking(JSON.parse(JSON.stringify(f.tracker.snapshot())));
+  assert.equal(restored.locate('thread', 'revision', f.text).kind, 'uncertain');
+});
+
+test('bulk replacement and inferred relocation are not observed cut/paste', () => {
+  const before = 'Target text.\nTarget text.\n';
+  const f = fixture(before, 'Target text.');
+  assert.equal(edit(f, 0, before.length, 'Target text.\n').kind, 'uncertain');
+  const moved = fixture('Start\nTarget text.\nA long unrelated paragraph with stable prose.\nEnd\n', 'Target text.');
+  const after = moved.text.replace('Target text.\n', '') + 'Target text.\n';
+  assert.equal(moved.tracker.locate('thread', 'revision', after).kind, 'uncertain');
+  const stable = fixture('Before. Target text. After.', 'Target text.');
+  const at = stable.tracker.locate('thread', 'revision', 'Introduction. ' + stable.text);
+  assert.equal(at.kind, 'attached'); assert.equal(at.evidence, 'reconstructed');
+});
+
+
+test('opposing diff scripts reconstruct UTF-16 source snapshots without changing offset units', () => {
+  for (const [before, after] of [['A 🧪 is B 🧪 is C', 'A 🧪 is C'], ['한 문장. 다른 문장.', '새 줄\n한 문장. 다른 문장!'], ['abaaba', 'aba']]) {
+    let restored = before;
+    for (const edit of reverseDiffEdits(before, after).sort((a, b) => b.start - a.start)) {
+      restored = restored.slice(0, edit.start) + edit.text + restored.slice(edit.start + edit.deleteCount);
+    }
+    assert.equal(restored, after);
+  }
 });

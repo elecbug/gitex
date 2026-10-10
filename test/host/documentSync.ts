@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { writeFile, readFile } from 'node:fs/promises';
 import { createAnchor, documentHash } from '../../src/anchor';
 import { enableEditTracking } from '../../src/editTracking';
-import { ReviewStore } from '../../src/store';
+import { ReviewStore } from '../reviewStore';
 
 async function until(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 15_000;
@@ -37,7 +37,7 @@ export async function documentSyncTests(app: any, store: ReviewStore): Promise<v
     await app.refresh();
     const anchor = enableEditTracking(createAnchor(file, draft, 1, 1, await peer.head()), draft);
     const id = await peer.create(anchor, 'Published before the paper commit', draft);
-    await peer.sync(); await store.pull(); await app.refresh();
+    await peer.pull(); await peer.sync(); await store.pull(); await app.refresh();
     const key = `${store.root}:${id}`;
     const item = () => app.getChildren().find((entry: any) => entry.key === key);
     const hidden = () => {
@@ -73,7 +73,7 @@ export async function documentSyncTests(app: any, store: ReviewStore): Promise<v
     assert.equal(document.getText(app.nativeThreads.get(key).range), 'New reviewed result.');
     assert.equal((await store.threads()).some(thread => thread.id === delayedId), false);
     await editor.edit(edit => edit.insert(new vscode.Position(0, 0), '% Local edit on the received paper\n'));
-    await peer.sync(); await store.pull(); await app.refresh();
+    await peer.pull(); await peer.sync(); await store.pull(); await app.refresh();
     const delayedKey = `${store.root}:${delayedId}`;
     const delayed = app.getChildren().find((entry: any) => entry.key === delayedKey);
     assert.equal(delayed.location.kind, 'attached', 'paper-first reviews attach through already received history despite later local edits');

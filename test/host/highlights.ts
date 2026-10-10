@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { chromium, Frame } from 'playwright-core';
 import { EditTracking } from '../../src/editTracking';
-import { ReviewStore } from '../../src/store';
+import { ReviewStore } from '../reviewStore';
 
 async function until(check: () => Promise<boolean>, label: string): Promise<void> {
   const deadline = Date.now() + 15_000;

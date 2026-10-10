@@ -30,6 +30,8 @@ h3 { font-size: 12px; font-weight: 600; }
 .repository { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; margin-bottom: 5px; }
 .location-row { align-items: flex-start; flex-wrap: wrap; gap: 6px 12px; }
 .line-range { color: var(--muted); font-family: var(--vscode-editor-font-family); font-size: 12px; margin-top: 6px; }
+.paper-commit { color: var(--muted); font: 11px/1.6 var(--vscode-editor-font-family); margin-top: 6px; overflow-wrap: anywhere; }
+#paper-review-status { margin: 4px 0 0; }
 .context-note { color: var(--vscode-list-warningForeground, var(--vscode-editorWarning-foreground)); font-size: 12px; padding: 0 18px 12px; overflow-wrap: anywhere; }
 .candidate-locations { padding: 0 18px 12px; }
 .candidate-location { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); padding: 8px 0; }
