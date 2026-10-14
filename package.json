@@ -3,7 +3,7 @@
   "displayName": "GiTex",
   "description": "Git-backed passage comments and collaboration for LaTeX papers.",
   "icon": "media/icon.png",
-  "version": "0.15.4",
+  "version": "0.15.5",
   "publisher": "elecbug",
   "license": "MIT",
   "repository": {
@@ -59,7 +59,7 @@
         "command": "gitex.addComment",
         "key": "ctrl+shift+/",
         "mac": "cmd+shift+/",
-        "when": "editorTextFocus && !editorReadonly && resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/i"
+        "when": "editorTextFocus && !editorReadonly && resourceScheme == file && gitex.supportedFile"
       }
     ],
     "commands": [
@@ -166,12 +166,12 @@
       "editor/context": [
         {
           "command": "gitex.addComment",
-          "when": "resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/",
+          "when": "resourceScheme == file && gitex.supportedFile",
           "group": "gitex"
         },
         {
           "command": "gitex.moveComment",
-          "when": "resourceScheme == file && resourceExtname =~ /\\.(tex|bib|sty|cls|ltx)$/",
+          "when": "resourceScheme == file && gitex.supportedFile",
           "group": "gitex"
         }
       ],
@@ -313,6 +313,12 @@
     "configuration": {
       "title": "GiTex",
       "properties": {
+        "gitex.enableNonLatexFiles": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "Enable GiTex comments, editor tracking, highlights and manual moves in other local text files, including Markdown and code. When disabled, editor tools are limited to .tex, .bib, .sty, .cls and .ltx files; existing reviews remain in Explorer."
+        },
         "gitex.autoPullOnInteraction": {
           "type": "boolean",
           "default": true,

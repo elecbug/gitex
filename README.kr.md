@@ -10,6 +10,7 @@
 - workspace 하위 Git 저장소 재귀 탐색 및 선택한 파일에 따라 코멘트·동기화 대상 전환
 - 주석 공유용 remote 선택·추가
 - `.tex`, `.bib`, `.sty`, `.cls`, `.ltx`에서 드래그한 텍스트에 주석 작성; 선택이 없을 때만 현재 줄 전체 사용
+- `gitex.enableNonLatexFiles`를 켜면 Markdown·코드 등 다른 로컬 텍스트 파일에서도 같은 도구 사용; 기본 비활성화
 - 답글 작성 및 Explorer·리뷰 패널의 해결 체크박스; 해결된 주석은 Explorer에 남기고 본문에서 숨기기
 - 주석과 답글 편집, 원문 및 모든 편집 이력 보존
 - 새 주석·답글·편집 저장 직후 한 번 자동 pull·병합·push; 기본 활성화, 설정으로 변경 가능
@@ -68,7 +69,7 @@
 
 필요한 환경은 VS Code 1.90 이상, Git, 로컬 논문 저장소입니다. LaTeX 컴파일에는 기존에 사용하던 LaTeX 확장과 TeX 배포판이 필요합니다.
 
-1. VS Code 명령 팔레트에서 **Extensions: Install from VSIX…**를 실행하고 `gitex-0.15.4.vsix`를 선택합니다.
+1. VS Code 명령 팔레트에서 **Extensions: Install from VSIX…**를 실행하고 `gitex-0.15.5.vsix`를 선택합니다.
 2. 논문의 로컬 Git 저장소 또는 여러 저장소를 포함한 상위 폴더를 열고 논문 파일을 선택합니다. 새로 복제하려면 **GiTex: Clone Repository**, 이미 열린 폴더에 적용하려면 **GiTex: Apply Repository to Current Folder**를 실행합니다.
 3. Git 작성자 이름과 이메일이 설정되어 있어야 합니다.
 
@@ -86,9 +87,23 @@
 
 파일이 디스크에 존재하면 저장하지 않은 편집 내용에도 주석을 달 수 있습니다. 선택한 텍스트만 저장하며 첫 줄과 마지막 줄의 일부만 선택한 경우도 그대로 반영합니다. 다른 사용자가 해당 문서 버전을 아직 받지 않았다면 **Pending document**로 대기하고 본문에는 표시하지 않습니다.
 
-단축키는 편집 가능한 로컬 `.tex`, `.bib`, `.sty`, `.cls`, `.ltx` 파일의 본문에 포커스가 있을 때 동작합니다. 단축키를 바꾸려면 VS Code의 Keyboard Shortcuts에서 `GiTex: Add Comment`를 검색하세요.
+단축키는 편집 가능한 로컬 `.tex`, `.bib`, `.sty`, `.cls`, `.ltx` 파일 또는 `gitex.enableNonLatexFiles`를 켠 다른 텍스트 파일의 본문에 포커스가 있을 때 동작합니다. 단축키를 바꾸려면 VS Code의 Keyboard Shortcuts에서 `GiTex: Add Comment`를 검색하세요.
 
 네트워크 인증은 Git의 SSH 에이전트나 HTTPS 자격 증명 도우미를 사용합니다. 먼저 같은 환경의 터미널에서 `git ls-remote origin`이 성공하는지 확인하면 됩니다. 원격 서버에는 `gitex-comments` 브랜치를 읽고 쓸 수 있는 권한이 필요합니다.
+
+## LaTeX 이외의 텍스트 파일에서 사용
+
+**0.15.5부터** VS Code 설정의 **GiTex: Enable Non Latex Files**를 켜면 Markdown·코드·일반 텍스트·확장자 없는 텍스트 파일에서도 사용할 수 있습니다.
+
+```json
+{
+  "gitex.enableNonLatexFiles": true
+}
+```
+
+기본값은 **false**이며 사용자·workspace·workspace 폴더별로 설정할 수 있습니다. 변경은 즉시 적용되며 **Ctrl+Shift+/**, 본문 우클릭 명령, 주석 버튼, 범위 추적, 음영과 수동 이동을 함께 활성화합니다. 파일은 workspace의 Git 저장소 안에 디스크 파일로 존재하고 로컬 텍스트 편집기로 열려 있어야 합니다. 주석 동기화와 커밋별 토론도 동일하게 동작합니다.
+
+끄면 해당 파일 종류의 편집기 주석·음영과 새 본문 주석·이동 기능을 비활성화합니다. 저장된 리뷰는 **GiTex Comments**에 남으며, 다시 켜면 문서 버전을 확인할 수 있을 때 편집기 표시를 복원합니다. 기존 LaTeX 파일 종류는 계속 사용할 수 있습니다.
 
 ## 선택한 파일을 기준으로 저장소 전환
 
@@ -148,7 +163,7 @@ GiTex 0.15.2은 VS Code의 편집 이벤트로 범위를 이동합니다. 선택
 
 ## 코멘트 위치 수동 이동
 
-1. 화면에 열린 `.tex`, `.bib`, `.sty`, `.cls`, `.ltx` 편집기에서 이동할 텍스트를 선택합니다. 선택 영역이 없으면 커서가 있는 줄을 사용합니다. 파일은 디스크에 존재해야 하며, 저장하지 않은 본문 편집도 반영합니다.
+1. 화면에 열린 `.tex`, `.bib`, `.sty`, `.cls`, `.ltx` 편집기 또는 `gitex.enableNonLatexFiles`를 켠 다른 로컬 텍스트 파일에서 이동할 텍스트를 선택합니다. 선택 영역이 없으면 커서가 있는 줄을 사용합니다. 파일은 디스크에 존재해야 하며, 저장하지 않은 본문 편집도 반영합니다.
 2. **GiTex Comments**에서 대상 스레드를 열고 리뷰 패널의 **Move to editor selection**을 누릅니다. Explorer의 해당 스레드 우클릭 또는 인라인 스레드 메뉴에서 **GiTex: Move Comment to Selection**을 실행해도 됩니다.
 3. 명령 팔레트나 본문 우클릭 메뉴에서 **GiTex: Move Comment to Selection**을 실행한 경우에는 이동할 스레드를 선택합니다.
 
@@ -249,7 +264,7 @@ make install
 make package
 ```
 
-프로젝트 루트에서 실행하면 현재 버전의 VSIX 파일(예: `gitex-0.15.4.vsix`)이 생성됩니다. `make` 또는 `make help`로 사용 가능한 명령을 확인할 수 있습니다.
+프로젝트 루트에서 실행하면 현재 버전의 VSIX 파일(예: `gitex-0.15.5.vsix`)이 생성됩니다. `make` 또는 `make help`로 사용 가능한 명령을 확인할 수 있습니다.
 
 | Make 명령 | 실행하는 작업 |
 | --- | --- |

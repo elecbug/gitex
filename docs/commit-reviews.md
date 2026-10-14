@@ -75,7 +75,7 @@ There is no manual-pull prerequisite and no paper freshness warning. The source 
 
 ## Snapshot sharing and size
 
-Comments can reference a whole `.tex`, `.bib`, `.sty`, `.cls` or `.ltx` snapshot, including unsaved/uncommitted source outside the selected passage. Snapshots and author emails remain in the metadata Git history. Deleting a file at the metadata tip does not remove it from outgoing ancestry.
+Comments can reference a whole annotated text-file snapshot, including unsaved/uncommitted source outside the selected passage. LaTeX file types are enabled by default; from 0.15.5, `gitex.enableNonLatexFiles` opts into other local text files. The same commit-scoping, synchronization and sharing policy applies. Snapshots and author emails remain in the metadata Git history. Deleting a file at the metadata tip does not remove it from outgoing ancestry.
 
 Before the first push for a repository/destination, automatic sync keeps comments local and directs the user to **Sync Comments**. Manual sync displays a confirmation with new snapshot count, uncompressed bytes and count absent from the current paper history. Cancel sends nothing. Consent is tied to the local repository and hashed push URL; a changed destination requires fresh acknowledgment. Both manual buttons and automatic save/commit publication use this gate. Fetch remains available without publication.
 

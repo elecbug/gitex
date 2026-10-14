@@ -87,7 +87,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.controller.options = { prompt: 'Review this passage', placeHolder: 'Comment or explain your change…' };
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: document => {
-        if (!this.repositoryFor(document.uri) || !supported.test(document.uri.fsPath)) { return []; }
+        if (!this.repositoryFor(document.uri) || !this.supportsFile(document.uri)) { return []; }
         const ranges: vscode.Range[] = [];
         let start: number | undefined;
         for (let line = 0; line <= document.lineCount; line++) {
@@ -112,7 +112,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       vscode.workspace.onDidChangeWorkspaceFolders(() => this.invalidateRepositories()),
       vscode.workspace.onDidOpenTextDocument(document => { if (document.uri.scheme === 'file') { this.schedule(); } }),
       vscode.workspace.onDidChangeTextDocument(event => {
-        if (event.contentChanges.length && supported.test(event.document.uri.fsPath)) {
+        if (event.contentChanges.length && this.supportsFile(event.document.uri)) {
           this.queueDocumentChange(event);
         }
       }),
@@ -135,10 +135,24 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
         void this.persistLocalTracking(); this.schedule();
       }),
       vscode.window.onDidChangeWindowState(event => { if (event.focused) { this.schedule(); } }),
-      vscode.workspace.onDidChangeConfiguration(event => { if (event.affectsConfiguration('gitex')) { this.schedule(); } })
+      vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('gitex')) {
+          this.updateFileSupportContext();
+          if (event.affectsConfiguration('gitex.enableNonLatexFiles')) {
+            this.controller.commentingRangeProvider = this.controller.commentingRangeProvider;
+            this.lensesChanged.fire();
+          }
+          this.schedule(0);
+        }
+      })
     );
-    const watcher = vscode.workspace.createFileSystemWatcher('**/*.{tex,bib,sty,cls,ltx}');
-    context.subscriptions.push(watcher, watcher.onDidChange(() => this.schedule()), watcher.onDidCreate(() => this.schedule()), watcher.onDidDelete(() => this.schedule()));
+    const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+    const sourceChanged = (uri: vscode.Uri) => {
+      if (!this.supportsFile(uri) || /\/(?:\.git|node_modules)\//.test(uri.path)) { return; }
+      const repository = this.repositoryFor(uri);
+      if (repository) { this.dirtyRepositories.add(repository.store.root); this.schedule(); }
+    };
+    context.subscriptions.push(watcher, watcher.onDidChange(sourceChanged), watcher.onDidCreate(sourceChanged), watcher.onDidDelete(sourceChanged));
     const repositories = vscode.workspace.createFileSystemWatcher('**/.git');
     context.subscriptions.push(repositories, repositories.onDidCreate(() => this.invalidateRepositories()),
       repositories.onDidDelete(() => this.invalidateRepositories()), repositories.onDidChange(() => this.invalidateRepositories()));
@@ -160,6 +174,16 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     this.command('gitex.pull', () => this.pull());
     this.command('gitex.sync', () => this.sync());
     this.command('gitex.syncThread', (reply: vscode.CommentReply) => this.syncThread(reply));
+    this.updateFileSupportContext();
+  }
+
+  private supportsFile(uri: vscode.Uri): boolean {
+    return uri.scheme === 'file' && (supported.test(uri.fsPath) ||
+      vscode.workspace.getConfiguration('gitex', uri).get<boolean>('enableNonLatexFiles', false));
+  }
+
+  private updateFileSupportContext(): void {
+    void vscode.commands.executeCommand('setContext', 'gitex.supportedFile', !!this.contextUri && this.supportsFile(this.contextUri));
   }
 
   private command(name: string, handler: (...args: any[]) => unknown): void {
@@ -192,6 +216,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     const source = uri.scheme === 'file' ? uri : this.excerptSources.get(uri.toString());
     if (!source) { return; } // VS Code also uses text editors for its virtual comment inputs.
     this.contextUri = source; this.ownerDirty = true;
+    this.updateFileSupportContext();
     // Native comment focus can fire this event again for the same file. Keep its widgets
     // alive while verifying ownership so an in-flight save still updates the same objects.
     if (this.repositoryFor(source)?.store.root !== this.activeRoot) {
@@ -297,7 +322,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   }
 
   private trackDocument(document: vscode.TextDocument, force = false): void {
-    if (document.uri.scheme !== 'file' || !supported.test(document.uri.fsPath)) { return; }
+    if (!this.supportsFile(document.uri)) { return; }
     const repository = this.repositoryFor(document.uri);
     if (!repository) { return; }
     for (const item of this.items) {
@@ -505,7 +530,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       // Remember clean buffers even before their first comment arrives, so later
       // metadata can be checked against the base of an ongoing local edit.
       for (const document of vscode.workspace.textDocuments) {
-        if (this.repositoryFor(document.uri) === repository && supported.test(document.uri.fsPath)) { await this.rememberBufferHead(document, head); }
+        if (this.repositoryFor(document.uri) === repository && this.supportsFile(document.uri)) { await this.rememberBufferHead(document, head); }
       }
       await this.recordCommitStates(repository, head, previous);
       reviews = await repository.store.threads();
@@ -571,6 +596,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     for (const item of next) {
       const { review, location } = item;
       if (item.repository.store.root !== this.activeRoot) { continue; }
+      if (!this.supportsFile(item.uri)) { continue; }
       if (location.kind === 'outdated' || location.kind === 'pending') { continue; }
       if (review.resolved) { continue; }
       visible.add(item.key);
@@ -603,7 +629,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
     for (const [key, thread] of this.nativeThreads) {
       if (!visible.has(key)) {
         const item = next.find(item => item.key === key);
-        if (item && item.location.kind !== 'pending' && item.location.kind !== 'outdated' && item.repository.store.root === this.activeRoot && !item.review.resolved && thread.comments.some(comment => comment.mode === vscode.CommentMode.Editing)) { thread.label = 'GiTex · Draft preserved'; }
+        if (item && this.supportsFile(item.uri) && item.location.kind !== 'pending' && item.location.kind !== 'outdated' && item.repository.store.root === this.activeRoot && !item.review.resolved && thread.comments.some(comment => comment.mode === vscode.CommentMode.Editing)) { thread.label = 'GiTex · Draft preserved'; }
         else { thread.dispose(); this.nativeThreads.delete(key); }
       }
     }
@@ -630,7 +656,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
 
   getChildren(): ThreadItem[] { return this.items.filter(item => item.repository.store.root === this.activeRoot); }
   private estimateMarkers(document: vscode.TextDocument): { item: ThreadItem; estimate: EstimateCandidate }[] {
-    if (document.uri.scheme !== 'file' || !supported.test(document.uri.fsPath)) { return []; }
+    if (!this.supportsFile(document.uri)) { return []; }
     return this.getChildren().filter(item => !item.review.resolved && item.uri.toString() === document.uri.toString())
       .flatMap(item => locationEstimates(item.location).map(estimate => ({ item, estimate })));
   }
@@ -676,7 +702,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   }
 
   private highlightedRanges(document: vscode.TextDocument): { item: ThreadItem; range: vscode.Range; inserted: boolean }[] {
-    if (document.uri.scheme !== 'file' || !supported.test(document.uri.fsPath)) { return []; }
+    if (!this.supportsFile(document.uri)) { return []; }
     const text = normalizedText(document.getText());
     return this.getChildren().filter(item => !item.review.resolved && item.location.kind !== 'pending' && item.uri.toString() === document.uri.toString()).flatMap(item => {
       const highlights = this.editTracking.highlights(item.key, item.review.anchorRevision, text);
@@ -761,7 +787,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
   private async addComment(body?: string): Promise<void> {
     await this.discover(true);
     const editor = vscode.window.activeTextEditor;
-    if (!editor || !supported.test(editor.document.uri.fsPath)) { throw new Error('Select a passage in a .tex, .bib, .sty, .cls, or .ltx file.'); }
+    if (!editor || !this.supportsFile(editor.document.uri)) { throw new Error('Select text in a local LaTeX file, or enable GiTex: Enable Non Latex Files to comment on other text files.'); }
     const repository = this.repositoryFor(editor.document.uri);
     if (!repository) { throw new Error('Open this file inside a Git repository workspace.'); }
     // Capture before showing the input box so a changing editor selection cannot retarget the comment.
@@ -804,6 +830,7 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
       repository = this.repositoryFor(reply.thread.uri);
       if (!repository || !reply.thread.range) { throw new Error('Open this comment in its paper repository.'); }
       const document = await this.document(reply.thread.uri, repository);
+      if (!this.supportsFile(document.uri)) { throw new Error('Enable GiTex: Enable Non Latex Files to comment on this file.'); }
       // VS Code retains the original drag range even after focus moves into the reply input.
       const { anchor, text } = await this.anchor(repository, document, reply.thread.range);
       const id = await repository.store.create(anchor, reply.text, text, anchor.baseCommit);
@@ -826,8 +853,8 @@ class GiTex implements vscode.Disposable, vscode.TreeDataProvider<ThreadItem> {
 
   private async moveComment(target?: ThreadItem | vscode.CommentThread): Promise<void> {
     const editor = vscode.window.activeTextEditor ?? this.lastEditor;
-    if (!editor || !vscode.window.visibleTextEditors.includes(editor) || editor.document.uri.scheme !== 'file' || !supported.test(editor.document.uri.fsPath)) {
-      throw new Error('Select the destination text in a visible LaTeX source editor, then move the comment to that selection.');
+    if (!editor || !vscode.window.visibleTextEditors.includes(editor) || !this.supportsFile(editor.document.uri)) {
+      throw new Error('Select the destination text in a visible supported text editor. For other file types, enable GiTex: Enable Non Latex Files.');
     }
     const document = editor.document;
     const version = document.version;

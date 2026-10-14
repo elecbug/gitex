@@ -14,6 +14,7 @@ import { highlightTests } from './highlights';
 import { documentSyncTests } from './documentSync';
 import { snapshotPrivacyTests } from './snapshotPrivacy';
 import { commitReviewTests } from './commitReviews';
+import { nonLatexTests } from './nonLatex';
 
 export async function run(): Promise<void> {
   await vscode.workspace.getConfiguration('gitex').update('autoSyncOnCommit', false, vscode.ConfigurationTarget.Workspace);
@@ -139,5 +140,6 @@ export async function run(): Promise<void> {
   await documentSyncTests(app, store);
   await commitReviewTests(app, store);
   await repositoryTests(app, store);
+  await nonLatexTests(app, store);
   console.log('GiTex extension host: applying repositories, unsaved-file protection, save-only sync, editing, history, drafts, and anchoring passed.');
 }

@@ -10,6 +10,7 @@ A VS Code extension for asynchronous Git review of LaTeX papers by one active pa
 - Discover repositories recursively under workspace folders and switch comments and sync targets with the selected source file.
 - Select or add a remote for sharing comments.
 - Comment on exactly selected text, or the current line when nothing is selected, in `.tex`, `.bib`, `.sty`, `.cls`, and `.ltx` files.
+- Enable `gitex.enableNonLatexFiles` to use the same tools in other local text files, including Markdown and code; disabled by default.
 - Reply to comments and resolve or reopen threads with checkboxes in Explorer and the review panel. Resolved threads stay in Explorer and are hidden in the paper editor.
 - Edit comments and replies while preserving the original text and every edit in history.
 - Automatically pull, merge and push comments once after creating a comment, replying or saving an edit; only the original author can edit a comment body.
@@ -68,7 +69,7 @@ Local saves continue while a sync waits for the remote or snapshot approval. Syn
 
 You need VS Code 1.90 or later, Git, and a local paper repository. Compiling LaTeX also requires your usual LaTeX extension and TeX distribution.
 
-1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.15.4.vsix`.
+1. Run **Extensions: Install from VSIX…** from the VS Code Command Palette and select `gitex-0.15.5.vsix`.
 2. Open your local paper repository or a parent folder containing several repositories, then select a paper file. To clone a repository, run **GiTex: Clone Repository**. To use the folder already open in VS Code, run **GiTex: Apply Repository to Current Folder**.
 3. Configure your Git author name and email if you have not already done so:
 
@@ -86,9 +87,23 @@ Expanded inline threads also have a **Sync** button beside **Reply**. It uses th
 
 You can comment on unsaved edits as long as the file already exists on disk. The exact selected text is saved, including partial first and last lines. If a collaborator has not received the annotated document version, the thread stays **Pending document** outside their editor until they pull the paper.
 
-The shortcut applies when the text editor has focus in an editable local `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` file. To customize it, search for `GiTex: Add Comment` in VS Code's Keyboard Shortcuts.
+The shortcut applies when the text editor has focus in an editable local `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` file, or another text file when `gitex.enableNonLatexFiles` is enabled. To customize it, search for `GiTex: Add Comment` in VS Code's Keyboard Shortcuts.
 
 Network authentication uses Git's SSH agent or HTTPS credential helper. Check that `git ls-remote origin` succeeds in a terminal in the same environment. You need permission to read and write the remote `gitex-comments` branch.
+
+## Use with other text files
+
+From **0.15.5**, enable **GiTex: Enable Non Latex Files** in VS Code Settings to use GiTex with Markdown, code, plain text and extensionless text files:
+
+```json
+{
+  "gitex.enableNonLatexFiles": true
+}
+```
+
+The default is **false**. Configure it for your user, workspace or an individual workspace folder. It takes effect immediately, including **Ctrl+Shift+/**, editor context-menu commands, the comment gutter, range tracking, highlights and manual moves. The file must exist on disk inside a workspace Git repository and be open as a local text document. Review synchronization and commit-specific discussions work the same way for these files.
+
+Disabling the setting hides editor comments and highlights in those file types and stops new source comments and moves there. Saved reviews remain available in **GiTex Comments**; enabling it again restores their editor display when the document version can be verified. The LaTeX file types above remain enabled.
 
 ## Selecting a repository by file
 
@@ -148,7 +163,7 @@ Resolved, pending, and outdated threads have no source shading. Colors adapt to 
 
 ## Move a comment manually
 
-1. Select the destination lines in a visible `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` editor. With no selection, GiTex uses the cursor line. The file must exist on disk; unsaved edits in it are supported.
+1. Select the destination lines in a visible `.tex`, `.bib`, `.sty`, `.cls`, or `.ltx` editor, or another local text file with `gitex.enableNonLatexFiles` enabled. With no selection, GiTex uses the cursor line. The file must exist on disk; unsaved edits in it are supported.
 2. Open the thread in **GiTex Comments**, then click **Move to editor selection** in the review panel. You can also select **GiTex: Move Comment to Selection** from the thread's Explorer context menu or inline thread toolbar.
 3. Alternatively, run **GiTex: Move Comment to Selection** from the Command Palette or the editor context menu and choose the thread to move.
 
@@ -249,7 +264,7 @@ make install
 make package
 ```
 
-Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.15.4.vsix`. Run `make` or `make help` to list the available targets.
+Run these commands from the project root to generate a VSIX for the current version, such as `gitex-0.15.5.vsix`. Run `make` or `make help` to list the available targets.
 
 | Make command | Action |
 | --- | --- |

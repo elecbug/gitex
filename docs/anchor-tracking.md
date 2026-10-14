@@ -2,6 +2,8 @@
 
 This document describes GiTex 0.15.2. Active tracking follows editor edits from a known document version. It does not repeatedly search for a similar sentence or promote a fuzzy match into a new reference.
 
+From 0.15.5, the same range tracking is available in other local text files when `gitex.enableNonLatexFiles` is enabled. This setting defaults to false; `.tex`, `.bib`, `.sty`, `.cls` and `.ltx` remain available by default. Disabling it hides non-LaTeX editor tools without removing review data from Explorer or the archive.
+
 ## 1. Selecting a target
 
 A nonempty editor selection owns exactly the dragged text, including partial first and last lines. GiTex does not expand it to a whole line or infer linguistic sentence boundaries. With a cursor and no selection, the target is the entire current line. Creation, native gutter comments, and manual moves use the same conversion.

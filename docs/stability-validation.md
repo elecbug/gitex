@@ -1,4 +1,4 @@
-# Stability validation for GiTex 0.15.4
+# Stability validation for GiTex 0.15.5
 
 Validation covers separate local-write and network queues, explicit publication policy, and the commit-scoped event architecture with inheritance frozen at first publication. The 0.15.4 update adds a read-only Earlier unresolved view for excluded ancestor threads, alongside regression coverage for false attachments and source-snapshot disclosure. It does not add automatic cross-version discussion merging or destructive archive pruning.
 
@@ -30,6 +30,7 @@ Run `make test` and `make test-extension` (the latter opens an isolated VS Code 
 | Sync feedback | Save during slow push, receive-only fetch, subsequent sync | Show remaining local work until publication succeeds |
 | Required policy | Call the production store without a publication policy | Reject before network access or local mutation |
 | Compatibility | Archives 1, 2 and 3 migrated to 4 | Preserve logical events and IDs; tracking/events remain version 1 |
+| Optional file types | Disabled default, Markdown shortcut/gutter, code relocation, extensionless files, sync, folder overrides and live toggles | Enable the same tools only when configured; preserve saved reviews when disabled and reconcile them when restored |
 
 VS Code 1.90 refuses modal dialogs in extension-test mode. The sharing test injects only the dialog response, verifies the disclosure text and exercises real inspection, cancellation, settings and Git publication. Other Review interactions are clicked with Playwright. A separate standalone VS Code 1.90.2 run with custom dialogs also rendered the real disclosure, verified that Cancel did not create a remote comments branch, and verified that Share This Push published successfully. Platform-native operating-system dialog layouts were not exercised.
 
